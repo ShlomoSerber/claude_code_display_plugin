@@ -52,12 +52,23 @@
     <div class="view"><img class="stream" alt="live display"></div>
     <div class="path"></div>
     <div class="actions">
+      <button class="btn sm expand" title="See this display full screen, view only">⛶ Fullscreen</button>
       <button class="btn sm vnc">Full control (VNC)</button>
       <button class="btn sm danger close">Close</button>
     </div>
     <div class="vncinfo muted hidden"></div>
   </div>
 </template>
+
+<div id="fs" class="fs hidden">
+  <div class="fsbar">
+    <span id="fstitle" class="fstitle"></span>
+    <span class="grow"></span>
+    <span class="viewonly">view only — no control</span>
+    <button id="fsclose" class="btn sm">Close ✕</button>
+  </div>
+  <div class="fsview"><img id="fsimg" alt="live display, full screen"></div>
+</div>
 
 <script src="/static/app.js"></script>
 </body>

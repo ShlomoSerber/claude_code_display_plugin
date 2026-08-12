@@ -30,6 +30,28 @@ async function doApply(btn, out) {
   load();
 }
 
+// ---- fullscreen (view-only) ----
+function openFullscreen(key, display, path) {
+  const fs = $("#fs");
+  $("#fstitle").textContent = display + (path ? "  ·  " + path : "");
+  // request full display resolution for the fullscreen view
+  $("#fsimg").src = `/surface/${key}/stream.mjpeg?w=1280`;
+  fs.classList.remove("hidden");
+  if (fs.requestFullscreen) fs.requestFullscreen().catch(() => {});
+}
+function closeFullscreen() {
+  const fs = $("#fs");
+  if (fs.classList.contains("hidden")) return;
+  $("#fsimg").src = "";           // stop the stream so the server frees the thread
+  fs.classList.add("hidden");
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+}
+$("#fsclose").onclick = closeFullscreen;
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement) closeFullscreen();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeFullscreen(); });
+
 const tiles = new Map();
 
 function renderSurfaces(state) {
@@ -46,6 +68,8 @@ function renderSurfaces(state) {
       const frag = $("#tile").content.cloneNode(true);
       t = frag.querySelector(".tile");
       t.querySelector(".stream").src = `/surface/${s.key}/stream.mjpeg`;
+      t.querySelector(".expand").onclick = () => openFullscreen(
+        s.key, t.querySelector(".dpy").textContent, t.querySelector(".path").textContent);
       t.querySelector(".close").onclick = async () => {
         await api(`/api/surface/${s.key}/close`, { method: "POST" }); load();
       };

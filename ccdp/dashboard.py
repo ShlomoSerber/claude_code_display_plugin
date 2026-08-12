@@ -11,6 +11,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 from . import __version__, applyplugin, bugs, claudecli, paths, registry, sandbox, surfaces
 
@@ -60,7 +61,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- GET ----
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/":
             return self._asset("index.html")
         if path.startswith("/static/"):
@@ -68,7 +70,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             return self._send(200, _state())
         if path.startswith("/surface/") and path.endswith("/stream.mjpeg"):
-            return self._mjpeg(path.split("/")[2])
+            q = parse_qs(parsed.query)
+            try:
+                w = int(q.get("w", [PREVIEW_WIDTH])[0])
+            except ValueError:
+                w = PREVIEW_WIDTH
+            return self._mjpeg(path.split("/")[2], width=w)
         if path.startswith("/surface/") and path.endswith("/frame.png"):
             return self._frame(path.split("/")[2])
         return self._send(404, {"error": "not found"})
@@ -110,10 +117,11 @@ class Handler(BaseHTTPRequestHandler):
         img.save(buf, "PNG")
         self._send(200, buf.getvalue(), "image/png")
 
-    def _mjpeg(self, key):
+    def _mjpeg(self, key, width=PREVIEW_WIDTH):
         rec = registry.get(key)
         if not rec or not surfaces._alive(rec):
             return self._send(404, {"error": "no such surface"})
+        width = max(240, min(int(width), rec.get("width", PREVIEW_WIDTH)))
         self.send_response(200)
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.send_header("Cache-Control", "no-cache")
@@ -125,11 +133,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not rec or not surfaces._alive(rec):
                     break
                 img = surfaces.screenshot_image(key)
-                if img.width > PREVIEW_WIDTH:
-                    s = PREVIEW_WIDTH / img.width
-                    img = img.resize((PREVIEW_WIDTH, round(img.height * s)))
+                if img.width > width:
+                    s = width / img.width
+                    img = img.resize((width, round(img.height * s)))
                 buf = io.BytesIO()
-                img.convert("RGB").save(buf, "JPEG", quality=70)
+                img.convert("RGB").save(buf, "JPEG", quality=75)
                 data = buf.getvalue()
                 self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
                                  + f"Content-Length: {len(data)}\r\n\r\n".encode() + data + b"\r\n")
