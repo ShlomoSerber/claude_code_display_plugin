@@ -40,8 +40,8 @@ code{background:var(--ground);padding:1px 6px;border-radius:5px;font-size:.92em}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{background:var(--accent-ink)}
 .btn.sm{padding:6px 12px}
-.btn.icon{padding:6px 9px}
-.btn.icon svg{display:block}
+.btn.icon{padding:0;width:32px;height:32px}
+.btn.icon svg{display:block;width:17px;height:17px}
 .btn.danger{color:var(--danger);border-color:var(--danger)}
 .btn.danger:hover{background:color-mix(in srgb,var(--danger) 10%,transparent)}
 .btn[disabled]{opacity:.6;cursor:default}
