@@ -8,7 +8,8 @@ from PIL import Image, ImageDraw
 
 ORANGE = (217, 119, 87, 255)   # Claude orange (#D97757)
 WHITE = (255, 255, 255, 255)
-CURSOR = [(183, 148), (183, 337), (228, 292), (261, 364), (300, 346), (267, 277), (330, 277)]
+BLACK = (0, 0, 0, 255)
+CURSOR = [(176, 130), (176, 346), (224, 300), (258, 376), (300, 358), (268, 286), (338, 286)]
 
 
 def draw(size):
@@ -17,7 +18,7 @@ def draw(size):
     d = ImageDraw.Draw(im)
     d.rounded_rectangle([16, 16, 496, 496], radius=112, fill=ORANGE)
     d.polygon(CURSOR, fill=WHITE)
-    d.line(CURSOR + [CURSOR[0]], fill=WHITE, width=10, joint="curve")  # white border
+    d.line(CURSOR + [CURSOR[0]], fill=BLACK, width=12, joint="curve")  # black border
     if size != S:
         im = im.resize((size, size), Image.LANCZOS)
     return im
