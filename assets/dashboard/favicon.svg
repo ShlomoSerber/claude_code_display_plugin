@@ -1,21 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1b2a33"/>
-      <stop offset="1" stop-color="#0c1317"/>
-    </linearGradient>
-  </defs>
-  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
-  <!-- monitor screen -->
-  <rect x="104" y="126" width="304" height="208" rx="22" fill="#e6eef2"/>
-  <rect x="104" y="126" width="304" height="44" rx="22" fill="#c9dbe2"/>
-  <rect x="104" y="150" width="304" height="20" fill="#c9dbe2"/>
-  <circle cx="130" cy="148" r="7" fill="#9c4310"/>
-  <circle cx="154" cy="148" r="7" fill="#c9dbe2"/>
-  <!-- stand -->
-  <rect x="234" y="334" width="44" height="36" fill="#2e434d"/>
-  <rect x="188" y="366" width="136" height="20" rx="10" fill="#2e434d"/>
-  <!-- amber cursor 'driving' the screen -->
-  <path d="M262 196 L262 322 L292 292 L314 340 L340 328 L318 282 L360 282 Z"
-        fill="#f59e0b" stroke="#0c1317" stroke-width="10" stroke-linejoin="round"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#D97757"/>
+  <path d="M183 148 L183 337 L228 292 L261 364 L300 346 L267 277 L330 277 Z"
+        fill="#ffffff" stroke="#ffffff" stroke-width="10"
+        stroke-linejoin="round" stroke-linecap="round"/>
 </svg>
