@@ -1,0 +1,12 @@
+# build outputs
+/dist/
+/packaging/build/
+*.deb
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+
+# local editor / os
+.DS_Store

@@ -1,0 +1,116 @@
+"""`ccdp` command-line entrypoint. Subcommands wire the plugin's hook, the MCP
+server, the dashboard UI, and housekeeping together."""
+import argparse
+import json
+import shutil
+import sys
+
+from . import __version__, paths
+
+
+def _doctor():
+    from . import capture, claudecli, sandbox, surfaces
+    checks = [
+        ("Xvfb", shutil.which("Xvfb")),
+        ("xdotool", shutil.which("xdotool")),
+        ("scrot", shutil.which("scrot")),
+        ("x11vnc", shutil.which("x11vnc")),
+        ("xdpyinfo", shutil.which("xdpyinfo")),
+        ("browser", surfaces.find_browser()),
+        ("Pillow (PIL)", "yes" if capture.available() else None),
+        ("claude", claudecli.find()),
+        ("bwrap (sandbox)", shutil.which("bwrap")),
+    ]
+    print(f"Claude Code Display Plugin {__version__}\n")
+    ok = True
+    for name, val in checks:
+        mark = "OK " if val else "-- "
+        if name not in ("claude", "bwrap (sandbox)") and not val:
+            ok = False
+        print(f"  [{mark}] {name:<16} {val or 'not found'}")
+    print(f"\n  sandbox: {'enabled' if sandbox.enabled() else 'off (default; set CCDP_SANDBOX=1 to opt in)'}")
+    print(f"  state dir: {paths.STATE_DIR}")
+    if not ok:
+        print("\nMissing a required dependency above. Install the .deb dependencies.")
+    return 0 if ok else 1
+
+
+def _surfaces():
+    from . import registry, surfaces
+    data = registry.all_surfaces()
+    if not data:
+        print("(no active surfaces)")
+        return 0
+    for r in data.values():
+        alive = surfaces._alive(r)
+        print(f"{r['key']}  {r['display']}  pss={surfaces.pss_mb(r)}MB  "
+              f"{'live' if alive else 'dead'}  {r['project_dir']}")
+    return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="ccdp", description="Claude Code Display Plugin")
+    sub = p.add_subparsers(dest="cmd")
+
+    sub.add_parser("mcp", help="run the stdio MCP server (used by the plugin)")
+    ui = sub.add_parser("ui", help="run the display dashboard")
+    ui.add_argument("--port", type=int, default=8776)
+    ui.add_argument("--no-open", action="store_true", help="don't open a browser")
+    sub.add_parser("doctor", help="check dependencies")
+    sub.add_parser("apply-plugin", help="register the plugin with Claude Code")
+    sub.add_parser("plugin-status", help="print plugin/claude status as JSON")
+    sub.add_parser("surfaces", help="list active surfaces")
+    sub.add_parser("session-start", help="hook: housekeeping at session start")
+    sub.add_parser("reap", help="close idle surfaces")
+    c = sub.add_parser("close", help="close a surface by key")
+    c.add_argument("key")
+    sub.add_parser("version", help="print version")
+
+    args = p.parse_args(argv)
+    paths.ensure_dirs()
+
+    if args.cmd == "mcp":
+        from . import mcp_server
+        mcp_server.main()
+        return 0
+    if args.cmd == "ui":
+        from . import dashboard
+        dashboard.serve(port=args.port, open_browser=not args.no_open)
+        return 0
+    if args.cmd == "doctor":
+        return _doctor()
+    if args.cmd == "apply-plugin":
+        from . import applyplugin
+        res = applyplugin.apply()
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("ok") else 1
+    if args.cmd == "plugin-status":
+        from . import applyplugin
+        print(json.dumps(applyplugin.status(), indent=2))
+        return 0
+    if args.cmd == "surfaces":
+        return _surfaces()
+    if args.cmd == "session-start":
+        from . import surfaces
+        try:
+            surfaces.reap_idle()
+        except Exception:
+            pass
+        return 0
+    if args.cmd == "reap":
+        from . import surfaces
+        surfaces.reap_idle()
+        return 0
+    if args.cmd == "close":
+        from . import surfaces
+        surfaces.close(args.key)
+        return 0
+    if args.cmd == "version":
+        print(__version__)
+        return 0
+    p.print_help()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "display": {
+      "command": "ccdp",
+      "args": ["mcp"]
+    }
+  }
+}

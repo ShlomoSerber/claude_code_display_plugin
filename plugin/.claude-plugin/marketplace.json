@@ -1,0 +1,14 @@
+{
+  "name": "ccdp",
+  "owner": { "name": "Claude Code Display Plugin" },
+  "metadata": {
+    "description": "Local marketplace for the Claude Code Display Plugin."
+  },
+  "plugins": [
+    {
+      "name": "ccdp-display",
+      "source": "./plugins/ccdp-display",
+      "description": "Gives the session a sandboxed virtual display it can see and drive as a human would."
+    }
+  ]
+}
