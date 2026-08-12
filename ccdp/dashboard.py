@@ -23,6 +23,7 @@ def _state():
     surf = []
     for r in registry.all_surfaces().values():
         surf.append(dict(key=r["key"], project_dir=r.get("project_dir"), display=r.get("display"),
+                         width=r.get("width", 1280), height=r.get("height", 800),
                          pss_mb=surfaces.pss_mb(r) if surfaces._alive(r) else 0,
                          vnc_port=r.get("vnc_port"), alive=surfaces._alive(r)))
     return dict(program="Claude Code Display Plugin", version=__version__,
@@ -100,6 +101,18 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"ok": True})
                 if action == "open":
                     surfaces.open_url(key, body.get("url", "about:blank"))
+                    return self._send(200, {"ok": True})
+                if action == "input":
+                    a = body.get("action")
+                    if a == "click":
+                        surfaces.click(key, body["x"], body["y"],
+                                       body.get("button", 1), bool(body.get("double")))
+                    elif a == "scroll":
+                        surfaces.scroll(key, body["x"], body["y"], int(body.get("amount", 1)))
+                    elif a == "type":
+                        surfaces.type_text(key, body.get("text", ""))
+                    elif a == "key":
+                        surfaces.press_key(key, body.get("keys", ""))
                     return self._send(200, {"ok": True})
                 if action == "vnc":
                     port = surfaces.start_vnc(key)

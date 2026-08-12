@@ -28,21 +28,21 @@ def _xdo(display, args, timeout=15):
 
 
 def move(display, x, y):
-    _xdo(display, ["mousemove", "--sync", str(int(x)), str(int(y))])
+    _xdo(display, ["mousemove",str(int(x)), str(int(y))])
 
 
 def click(display, x, y, button=1):
-    _xdo(display, ["mousemove", "--sync", str(int(x)), str(int(y)), "click", str(button)])
+    _xdo(display, ["mousemove",str(int(x)), str(int(y)), "click", str(button)])
 
 
 def double_click(display, x, y, button=1):
-    _xdo(display, ["mousemove", "--sync", str(int(x)), str(int(y)),
+    _xdo(display, ["mousemove",str(int(x)), str(int(y)),
                    "click", "--repeat", "2", "--delay", "80", str(button)])
 
 
 def scroll(display, x, y, amount):
     button = "4" if amount < 0 else "5"  # 4 = up, 5 = down
-    args = ["mousemove", "--sync", str(int(x)), str(int(y))]
+    args = ["mousemove",str(int(x)), str(int(y))]
     for _ in range(min(abs(int(amount)), 50)):
         args += ["click", button]
     _xdo(display, args)

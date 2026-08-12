@@ -52,22 +52,19 @@
     <div class="view"><img class="stream" alt="live display"></div>
     <div class="path"></div>
     <div class="actions">
-      <button class="btn sm expand" title="See this display full screen, view only">⛶ Fullscreen</button>
-      <button class="btn sm vnc">Full control (VNC)</button>
+      <button class="btn sm icon expand" title="Fullscreen (view only)"></button>
+      <button class="btn sm control">Control display</button>
+      <span class="grow"></span>
       <button class="btn sm danger close">Close</button>
     </div>
-    <div class="vncinfo muted hidden"></div>
   </div>
 </template>
 
-<div id="fs" class="fs hidden">
-  <div class="fsbar">
-    <span id="fstitle" class="fstitle"></span>
-    <span class="grow"></span>
-    <span class="viewonly">view only — no control</span>
-    <button id="fsclose" class="btn sm">Close ✕</button>
-  </div>
-  <div class="fsview"><img id="fsimg" alt="live display, full screen"></div>
+<!-- in-window fullscreen / control overlay -->
+<div id="stage" class="stage hidden">
+  <div class="stageview"><img id="stageimg" alt="display"></div>
+  <div id="stagebadge" class="stagebadge hidden">controlling — clicks and typing go to the display</div>
+  <button id="stagetoggle" class="stagebtn" title="Exit fullscreen"></button>
 </div>
 
 <script src="/static/app.js"></script>
