@@ -35,7 +35,7 @@ code{background:var(--ground);padding:1px 6px;border-radius:5px;font-size:.92em}
 
 .btn{font:inherit;font-size:13px;padding:7px 14px;border-radius:8px;border:1px solid var(--line);
   background:var(--panel);color:var(--ink);cursor:pointer;display:inline-flex;align-items:center;
-  gap:7px;text-decoration:none;line-height:1}
+  justify-content:center;gap:7px;text-decoration:none;line-height:1}
 .btn:hover{border-color:var(--faint)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{background:var(--accent-ink)}
