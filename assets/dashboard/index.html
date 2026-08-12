@@ -4,32 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Code Display Plugin</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="256x256" href="/static/favicon.png">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header class="bar">
-  <div class="mark">Claude Code Display Plugin</div>
-  <div class="grow"></div>
-  <div id="claudePill" class="pill">checking…</div>
-</header>
-
 <main>
-  <section id="gate" class="gate hidden">
-    <h2>Claude Code isn't installed yet</h2>
-    <p>This program gives your Claude Code sessions a display to see and drive. Install Claude Code
-       first, then apply the plugin so new sessions pick up the display tools.</p>
-    <p class="how">Install from <code>https://claude.com/claude-code</code>, then click below.</p>
-    <button id="applyBtn" class="btn primary">Apply plugin</button>
-    <pre id="applyOut" class="out hidden"></pre>
-  </section>
-
-  <section id="applied" class="gate hidden">
-    <h2>Plugin ready</h2>
-    <p>Claude Code is installed. Open a session in any project directory — the display tools are
-       available there. Apply again if you reinstalled or updated.</p>
-    <button id="applyBtn2" class="btn">Re-apply plugin</button>
-    <pre id="applyOut2" class="out hidden"></pre>
-  </section>
+  <section id="gate" class="gatecard hidden"></section>
 
   <section class="surfaces">
     <div class="shead">
@@ -60,11 +41,13 @@
   </div>
 </template>
 
-<!-- in-window fullscreen / control overlay -->
+<!-- in-window fullscreen (view) / control (noVNC) stage -->
 <div id="stage" class="stage hidden">
-  <div class="stageview"><img id="stageimg" alt="display"></div>
-  <div id="stagebadge" class="stagebadge hidden">controlling — clicks and typing go to the display</div>
-  <button id="stagetoggle" class="stagebtn" title="Exit fullscreen"></button>
+  <div class="stageview">
+    <img id="stageimg" alt="display">
+    <iframe id="stageframe" class="hidden" title="control"></iframe>
+  </div>
+  <button id="stagetoggle" class="btn sm icon stagebtn" title="Exit fullscreen"></button>
 </div>
 
 <script src="/static/app.js"></script>

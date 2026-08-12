@@ -58,6 +58,7 @@ def main(argv=None):
     ui.add_argument("--no-open", action="store_true", help="don't open a browser")
     sub.add_parser("doctor", help="check dependencies")
     sub.add_parser("apply-plugin", help="register the plugin with Claude Code")
+    sub.add_parser("remove-plugin", help="unregister the plugin from Claude Code")
     sub.add_parser("plugin-status", help="print plugin/claude status as JSON")
     sub.add_parser("surfaces", help="list active surfaces")
     sub.add_parser("session-start", help="hook: housekeeping at session start")
@@ -84,6 +85,11 @@ def main(argv=None):
         res = applyplugin.apply()
         print(json.dumps(res, indent=2))
         return 0 if res.get("ok") else 1
+    if args.cmd == "remove-plugin":
+        from . import applyplugin
+        res = applyplugin.remove()
+        print(json.dumps(res, indent=2))
+        return 0
     if args.cmd == "plugin-status":
         from . import applyplugin
         print(json.dumps(applyplugin.status(), indent=2))

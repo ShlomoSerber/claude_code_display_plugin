@@ -7,5 +7,5 @@ in — plus a local UI to watch those displays and a tool for Claude to file bug
 This package is the runtime: surface lifecycle, capture, input, the MCP server,
 and the dashboard. See README.md for the full picture.
 """
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 PROGRAM_NAME = "Claude Code Display Plugin"

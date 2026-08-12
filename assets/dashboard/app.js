@@ -3,105 +3,69 @@ const $ = (s, r = document) => r.querySelector(s);
 const api = (p, o) => fetch(p, o).then(r => r.json());
 
 const ICON_EXPAND = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg>';
-const ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v5H3M16 3v5h5M3 16h5v5M21 16h-5v5"/></svg>';
+const ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v5H3M16 3v5h5M3 16h5v5M21 16h-5v5"/></svg>';
 
-/* ---------- plugin gate ---------- */
+/* ---------- single-line status card ---------- */
 function renderGate(state) {
-  const installed = state.claude && state.claude.installed;
-  const pill = $("#claudePill");
-  pill.textContent = installed ? ("Claude " + (state.claude.version || "installed")) : "Claude not installed";
-  pill.className = "pill " + (installed ? "ok" : "no");
-  $("#gate").classList.toggle("hidden", installed);
-  $("#applied").classList.toggle("hidden", !installed);
+  const g = $("#gate");
+  const claude = state.claude && state.claude.installed;
+  const applied = state.plugin && state.plugin.plugin_applied;
+  g.classList.remove("hidden");
+  if (!claude) {
+    g.innerHTML = `<span class="gtxt"><b>Claude Code is not installed</b> — the display tools need it.</span>
+      <span class="grow"></span>
+      <a class="btn primary" href="https://claude.com/claude-code" target="_blank" rel="noopener">Install Claude</a>`;
+  } else if (!applied) {
+    g.innerHTML = `<span class="gtxt"><b>Plugin not installed</b></span>
+      <span class="grow"></span>
+      <button class="btn primary" data-act="apply">Install</button>`;
+  } else {
+    g.innerHTML = `<span class="gtxt"><b>Plugin installed</b> <span class="muted">· Claude ${state.claude.version || ""}</span></span>
+      <span class="grow"></span>
+      <button class="btn" data-act="apply">Reinstall</button>
+      <button class="btn danger" data-act="remove">Uninstall</button>`;
+  }
+  g.querySelectorAll("[data-act]").forEach(b => { b.onclick = () => gateAction(b.dataset.act, b); });
 }
-async function doApply(btn, out) {
-  btn.disabled = true; const label = btn.textContent; btn.textContent = "Applying…";
-  out.classList.remove("hidden"); out.textContent = "Running plugin registration…";
-  try {
-    const res = await api("/api/apply-plugin", { method: "POST" });
-    out.textContent = res.message + "\n\n" + (res.steps || []).map(
-      s => `$ ${s.cmd}\n[rc ${s.rc}] ${s.out || ""} ${s.err || ""}`).join("\n\n");
-  } catch (e) { out.textContent = "Failed: " + e; }
+async function gateAction(act, btn) {
+  const label = btn.textContent; btn.disabled = true; btn.textContent = "…";
+  try { await api(act === "remove" ? "/api/remove-plugin" : "/api/apply-plugin", { method: "POST" }); }
+  catch (e) { /* ignore */ }
   btn.disabled = false; btn.textContent = label; load();
 }
 
-/* ---------- in-window stage: fullscreen (view) and control ---------- */
-let stage = { key: null, mode: null, w: 1280, h: 800 };
+/* ---------- in-window stage: fullscreen (view) + control (noVNC) ---------- */
 const stageEl = () => $("#stage");
 const stageImg = $("#stageimg");
+const stageFrame = $("#stageframe");
 
 function openStage(key, mode, w, h) {
-  stage = { key, mode, w: w || 1280, h: h || 800 };
   const el = stageEl();
   el.classList.remove("hidden");
-  el.classList.toggle("control", mode === "control");
-  $("#stagebadge").classList.toggle("hidden", mode !== "control");
-  stageImg.src = `/surface/${key}/stream.mjpeg?w=1280`;
+  if (mode === "control") {
+    stageImg.classList.add("hidden"); stageImg.src = "";
+    stageFrame.classList.remove("hidden");
+    stageFrame.removeAttribute("src");
+    api(`/api/surface/${key}/control`, { method: "POST" })
+      .then(d => { if (d && d.url) stageFrame.src = d.url; })
+      .catch(() => {});
+  } else {
+    stageFrame.classList.add("hidden"); stageFrame.removeAttribute("src");
+    stageImg.classList.remove("hidden");
+    stageImg.src = `/surface/${key}/stream.mjpeg?w=1280`;
+  }
 }
 function closeStage() {
-  if (stageEl().classList.contains("hidden")) return;
-  stageEl().classList.add("hidden");
+  const el = stageEl();
+  if (el.classList.contains("hidden")) return;
+  el.classList.add("hidden");
   stageImg.src = "";
-  stage.key = null;
+  stageFrame.removeAttribute("src");
 }
 $("#stagetoggle").innerHTML = ICON_COLLAPSE;
 $("#stagetoggle").onclick = closeStage;
-
-function sendInput(body) {
-  if (!stage.key) return;
-  fetch(`/api/surface/${stage.key}/input`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
-  }).catch(() => {});
-}
-function mapCoords(e) {
-  const rect = stageImg.getBoundingClientRect();
-  const scale = Math.min(rect.width / stage.w, rect.height / stage.h);
-  const cw = stage.w * scale, ch = stage.h * scale;
-  const ox = (rect.width - cw) / 2, oy = (rect.height - ch) / 2;
-  const x = Math.round(Math.max(0, Math.min(stage.w - 1, (e.clientX - rect.left - ox) / scale)));
-  const y = Math.round(Math.max(0, Math.min(stage.h - 1, (e.clientY - rect.top - oy) / scale)));
-  return { x, y };
-}
-stageImg.addEventListener("click", e => {
-  if (stage.mode !== "control") return;
-  const p = mapCoords(e); sendInput({ action: "click", x: p.x, y: p.y, button: 1 });
-});
-stageImg.addEventListener("dblclick", e => {
-  if (stage.mode !== "control") return;
-  const p = mapCoords(e); sendInput({ action: "click", x: p.x, y: p.y, button: 1, double: true });
-});
-stageImg.addEventListener("contextmenu", e => {
-  if (stage.mode !== "control") return;
-  e.preventDefault(); const p = mapCoords(e); sendInput({ action: "click", x: p.x, y: p.y, button: 3 });
-});
-stageImg.addEventListener("wheel", e => {
-  if (stage.mode !== "control") return;
-  e.preventDefault(); const p = mapCoords(e);
-  sendInput({ action: "scroll", x: p.x, y: p.y, amount: e.deltaY > 0 ? 3 : -3 });
-}, { passive: false });
-
-const KEYMAP = {
-  Enter: "Return", Backspace: "BackSpace", Tab: "Tab", Escape: "Escape", Delete: "Delete",
-  ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
-  Home: "Home", End: "End", PageUp: "Prior", PageDown: "Next", " ": "space"
-};
 document.addEventListener("keydown", e => {
-  if (stageEl().classList.contains("hidden")) return;
-  if (stage.mode !== "control") { if (e.key === "Escape") closeStage(); return; }
-  const mods = [];
-  if (e.ctrlKey) mods.push("ctrl");
-  if (e.altKey) mods.push("alt");
-  if (e.metaKey) mods.push("super");
-  const special = KEYMAP[e.key];
-  if (special || mods.length) {
-    const base = special || (e.key.length === 1 ? e.key : null);
-    if (!base) return;
-    e.preventDefault();
-    sendInput({ action: "key", keys: [...mods, base].join("+") });
-  } else if (e.key.length === 1) {
-    e.preventDefault();
-    sendInput({ action: "type", text: e.key });
-  }
+  if (!stageEl().classList.contains("hidden") && e.key === "Escape") closeStage();
 });
 
 /* ---------- displays ---------- */
@@ -146,8 +110,5 @@ async function load() {
     renderSurfaces(state);
   } catch (e) { /* server not ready */ }
 }
-
-$("#applyBtn").onclick = () => doApply($("#applyBtn"), $("#applyOut"));
-$("#applyBtn2").onclick = () => doApply($("#applyBtn2"), $("#applyOut2"));
 load();
 setInterval(load, 4000);

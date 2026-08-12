@@ -58,7 +58,7 @@ Version: $VER
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: python3 (>= 3.9), python3-pil, xvfb, x11-utils, xdotool, scrot, x11vnc, xdg-utils
+Depends: python3 (>= 3.9), python3-pil, xvfb, x11-utils, xdotool, scrot, x11vnc, xdg-utils, novnc, websockify
 Recommends: google-chrome-stable | chromium | chromium-browser
 Suggests: python3-mss, bubblewrap
 Installed-Size: $INSTALLED_KB

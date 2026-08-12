@@ -55,7 +55,8 @@ class Handler(BaseHTTPRequestHandler):
         path = os.path.normpath(os.path.join(base, name))
         if not path.startswith(base) or not os.path.isfile(path):
             return self._send(404, {"error": "not found"})
-        ctype = {"html": "text/html", "css": "text/css", "js": "application/javascript"}.get(
+        ctype = {"html": "text/html", "css": "text/css", "js": "application/javascript",
+                 "svg": "image/svg+xml", "png": "image/png", "ico": "image/x-icon"}.get(
             name.rsplit(".", 1)[-1], "application/octet-stream")
         with open(path, "rb") as f:
             self._send(200, f.read(), ctype)
@@ -93,6 +94,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/apply-plugin":
                 return self._send(200, applyplugin.apply())
+            if path == "/api/remove-plugin":
+                return self._send(200, applyplugin.remove())
             parts = path.strip("/").split("/")
             if len(parts) == 4 and parts[0] == "api" and parts[1] == "surface":
                 key, action = parts[2], parts[3]
@@ -114,9 +117,9 @@ class Handler(BaseHTTPRequestHandler):
                     elif a == "key":
                         surfaces.press_key(key, body.get("keys", ""))
                     return self._send(200, {"ok": True})
-                if action == "vnc":
-                    port = surfaces.start_vnc(key)
-                    return self._send(200, {"ok": True, "port": port})
+                if action == "control":
+                    url = surfaces.start_control(key)
+                    return self._send(200, {"ok": True, "url": url})
             return self._send(404, {"error": "not found"})
         except Exception as e:
             return self._send(500, {"error": str(e)})
