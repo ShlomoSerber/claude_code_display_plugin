@@ -79,7 +79,14 @@ class Handler(BaseHTTPRequestHandler):
                 w = PREVIEW_WIDTH
             return self._mjpeg(path.split("/")[2], width=w)
         if path.startswith("/surface/") and path.endswith("/frame.png"):
-            return self._frame(path.split("/")[2])
+            q = parse_qs(parsed.query)
+            w = None
+            if q.get("w"):
+                try:
+                    w = int(q["w"][0])
+                except ValueError:
+                    w = None
+            return self._frame(path.split("/")[2], width=w)
         return self._send(404, {"error": "not found"})
 
     # ---- POST ----
@@ -124,14 +131,19 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._send(500, {"error": str(e)})
 
-    def _frame(self, key):
+    def _frame(self, key, width=None):
         rec = registry.get(key)
         if not rec or not surfaces._alive(rec):
             return self._send(404, {"error": "no such surface"})
         img = surfaces.screenshot_image(key)
+        if width:
+            width = max(240, min(int(width), img.width))
+            if img.width > width:
+                s = width / img.width
+                img = img.resize((width, round(img.height * s)))
         buf = io.BytesIO()
-        img.save(buf, "PNG")
-        self._send(200, buf.getvalue(), "image/png")
+        img.convert("RGB").save(buf, "JPEG", quality=75)
+        self._send(200, buf.getvalue(), "image/jpeg")
 
     def _mjpeg(self, key, width=PREVIEW_WIDTH):
         rec = registry.get(key)
@@ -206,18 +218,17 @@ def _window_open():
     return False
 
 
-def _watch_window(httpd):
-    # wait for the window to actually appear, then quit when it's gone
+def _wait_window_closed():
+    # wait for the window to appear, then block until it's gone
     for _ in range(40):
         if _window_open():
             break
         time.sleep(0.3)
     misses = 0
     while True:
-        time.sleep(1.5)
+        time.sleep(1.0)
         misses = 0 if _window_open() else misses + 1
         if misses >= 2:
-            httpd.shutdown()
             return
 
 
@@ -233,11 +244,35 @@ def serve(port=8776, open_browser=True):
             _open_window(url)
         return
     print(f"Claude Code Display Plugin — dashboard at {url}")
-    launched = _open_window(url) if open_browser else False
-    if launched:
-        # closing the app window quits the program, like a normal desktop app
-        threading.Thread(target=_watch_window, args=(httpd,), daemon=True).start()
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        httpd.shutdown()
+
+    if not open_browser:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            httpd.shutdown()
+        return
+
+    # serve in the background; the main thread owns the window lifecycle
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    used_shell = False
+    if not os.environ.get("CCDP_NO_SHELL"):
+        try:
+            from . import shell
+            if shell.available():
+                shell.run_gtk(url)          # native GTK+WebKit window; blocks until closed
+                used_shell = True
+        except Exception as e:
+            util.log(f"native shell failed, falling back to app window: {e}", component="ui")
+
+    if not used_shell:
+        if _open_window(url):
+            _wait_window_closed()           # Chrome app window; block until closed
+        else:
+            try:
+                while True:
+                    time.sleep(3600)        # fallback browser tab: run until interrupted
+            except KeyboardInterrupt:
+                pass
+
+    httpd.shutdown()

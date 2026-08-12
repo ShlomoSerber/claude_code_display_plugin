@@ -5,6 +5,21 @@ const api = (p, o) => fetch(p, o).then(r => r.json());
 const ICON_EXPAND = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg>';
 const ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v5H3M16 3v5h5M3 16h5v5M21 16h-5v5"/></svg>';
 
+// Live view via frame-polling (works in Chrome and WebKitGTK, which doesn't do MJPEG).
+// Preloads the next frame off-screen and swaps on load to avoid flicker.
+function makePoller(imgEl, urlFn, fps) {
+  let stopped = false, timer = null;
+  function tick() {
+    if (stopped) return;
+    const probe = new Image();
+    probe.onload = () => { if (!stopped) imgEl.src = probe.src; timer = setTimeout(tick, 1000 / fps); };
+    probe.onerror = () => { timer = setTimeout(tick, 1000 / fps); };
+    probe.src = urlFn();
+  }
+  tick();
+  return () => { stopped = true; if (timer) clearTimeout(timer); };
+}
+
 /* ---------- single-line status card ---------- */
 function renderGate(state) {
   const g = $("#gate");
@@ -38,10 +53,12 @@ async function gateAction(act, btn) {
 const stageEl = () => $("#stage");
 const stageImg = $("#stageimg");
 const stageFrame = $("#stageframe");
+let stageStop = null;
 
 function openStage(key, mode, w, h) {
   const el = stageEl();
   el.classList.remove("hidden");
+  if (stageStop) { stageStop(); stageStop = null; }
   if (mode === "control") {
     stageImg.classList.add("hidden"); stageImg.src = "";
     stageFrame.classList.remove("hidden");
@@ -52,13 +69,14 @@ function openStage(key, mode, w, h) {
   } else {
     stageFrame.classList.add("hidden"); stageFrame.removeAttribute("src");
     stageImg.classList.remove("hidden");
-    stageImg.src = `/surface/${key}/stream.mjpeg?w=1280`;
+    stageStop = makePoller(stageImg, () => `/surface/${key}/frame.png?w=1280&t=${Date.now()}`, 4);
   }
 }
 function closeStage() {
   const el = stageEl();
   if (el.classList.contains("hidden")) return;
   el.classList.add("hidden");
+  if (stageStop) { stageStop(); stageStop = null; }
   stageImg.src = "";
   stageFrame.removeAttribute("src");
 }
@@ -83,7 +101,8 @@ function renderSurfaces(state) {
     if (!t) {
       const frag = $("#tile").content.cloneNode(true);
       t = frag.querySelector(".tile");
-      t.querySelector(".stream").src = `/surface/${s.key}/stream.mjpeg`;
+      const streamImg = t.querySelector(".stream");
+      t._stopPoll = makePoller(streamImg, () => `/surface/${s.key}/frame.png?w=720&t=${Date.now()}`, 3);
       t.querySelector(".expand").innerHTML = ICON_EXPAND;
       t.querySelector(".expand").onclick = () => openStage(t.dataset.key, "view", +t.dataset.w, +t.dataset.h);
       t.querySelector(".control").onclick = () => openStage(t.dataset.key, "control", +t.dataset.w, +t.dataset.h);
@@ -99,7 +118,7 @@ function renderSurfaces(state) {
     t.querySelector(".path").textContent = s.project_dir || "";
   }
   for (const [key, t] of tiles) {
-    if (!seen.has(key)) { t.remove(); tiles.delete(key); }
+    if (!seen.has(key)) { if (t._stopPoll) t._stopPoll(); t.remove(); tiles.delete(key); }
   }
 }
 

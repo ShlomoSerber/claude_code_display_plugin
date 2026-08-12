@@ -34,8 +34,8 @@ cp "$HERE/packaging/icon.svg" "$ROOT/usr/share/icons/hicolor/scalable/apps/ccdp.
 python3 "$HERE/packaging/gen_icon.py" "$ROOT/usr/share/icons/hicolor" || \
   echo "warn: PNG icon generation skipped (Pillow missing); SVG icon still shipped"
 
-# ---- desktop launcher for the UI ----
-cat > "$ROOT/usr/share/applications/ccdp.desktop" <<EOF
+# ---- desktop launcher for the UI (filename matches the GTK app-id) ----
+cat > "$ROOT/usr/share/applications/com.ccdp.display.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Claude Code Display Plugin
@@ -58,7 +58,7 @@ Version: $VER
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: python3 (>= 3.9), python3-pil, xvfb, x11-utils, xdotool, scrot, x11vnc, xdg-utils, novnc, websockify
+Depends: python3 (>= 3.9), python3-pil, python3-gi, gir1.2-gtk-3.0, gir1.2-webkit2-4.1, xvfb, x11-utils, xdotool, scrot, x11vnc, xdg-utils, novnc, websockify
 Recommends: google-chrome-stable | chromium | chromium-browser
 Suggests: python3-mss, bubblewrap
 Installed-Size: $INSTALLED_KB
