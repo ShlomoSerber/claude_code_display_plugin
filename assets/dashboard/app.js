@@ -29,11 +29,11 @@ function renderGate(state) {
   if (!claude) {
     g.innerHTML = `<span class="gtxt"><b>Claude Code is not installed</b> — the display tools need it.</span>
       <span class="grow"></span>
-      <a class="btn primary" href="https://claude.com/claude-code" target="_blank" rel="noopener">Install Claude</a>`;
+      <a class="btn" href="https://claude.com/claude-code" target="_blank" rel="noopener">Install Claude</a>`;
   } else if (!applied) {
     g.innerHTML = `<span class="gtxt"><b>Plugin not installed</b></span>
       <span class="grow"></span>
-      <button class="btn primary" data-act="apply">Install</button>`;
+      <button class="btn" data-act="apply">Install</button>`;
   } else {
     g.innerHTML = `<span class="gtxt"><b>Plugin installed</b> <span class="muted">· Claude ${state.claude.version || ""}</span></span>
       <span class="grow"></span>
@@ -43,10 +43,13 @@ function renderGate(state) {
   g.querySelectorAll("[data-act]").forEach(b => { b.onclick = () => gateAction(b.dataset.act, b); });
 }
 async function gateAction(act, btn) {
-  const label = btn.textContent; btn.disabled = true; btn.textContent = "…";
+  const w = btn.offsetWidth;
+  btn.disabled = true;
+  btn.style.minWidth = w + "px";           // avoid the button collapsing around the spinner
+  btn.innerHTML = '<span class="spinner"></span>';
   try { await api(act === "remove" ? "/api/remove-plugin" : "/api/apply-plugin", { method: "POST" }); }
   catch (e) { /* ignore */ }
-  btn.disabled = false; btn.textContent = label; load();
+  load();                                   // rebuilds the card in its new state
 }
 
 /* ---------- in-window stage: fullscreen (view) + control (noVNC) ---------- */

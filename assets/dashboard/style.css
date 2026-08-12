@@ -14,9 +14,16 @@ body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
   font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
 
 main{padding:20px 24px 48px}          /* no max-width: content fills the window */
-h2{font-size:18px;font-weight:700;margin:0 0 12px}
+h2{font-size:18px;font-weight:700;margin:0}
 .muted{color:var(--faint);font-size:13px}
+#empty{margin:2px 0 0}
 .hidden{display:none!important}
+
+/* button loading spinner */
+.spinner{width:14px;height:14px;border:2px solid color-mix(in srgb,currentColor 28%,transparent);
+  border-top-color:currentColor;border-radius:50%;display:inline-block;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation-duration:1.6s}}
 code{background:var(--ground);padding:1px 6px;border-radius:5px;font-size:.92em}
 
 /* single-line status card */
@@ -39,7 +46,7 @@ code{background:var(--ground);padding:1px 6px;border-radius:5px;font-size:.92em}
 .btn.danger:hover{background:color-mix(in srgb,var(--danger) 10%,transparent)}
 .btn[disabled]{opacity:.6;cursor:default}
 
-.shead{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+.shead{display:flex;align-items:baseline;gap:12px;margin-bottom:8px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px}
 .tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
 .thead{display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:12.5px;color:var(--soft)}
