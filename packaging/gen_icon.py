@@ -6,9 +6,10 @@ The cursor is pre-rasterised (white fill + black border) as cursor.png next to
 this script, so this stays Pillow-only at build time.
 
 Centering metric: the cursor is a diagonal arrow whose mass sits toward the
-upper-left, so bounding-box centering looks left-heavy (dead space on the
-right). We center on the **alpha-weighted centroid** (visual center of mass)
-instead, which reads as balanced. Usage: gen_icon.py <hicolor_dir>
+upper-left. Bounding-box centering looks left-heavy (dead space on the right);
+the alpha-weighted centroid (visual center of mass) over-corrects and looks
+right-heavy. The optical sweet spot is between the two, so we anchor on a blend
+of bbox-center and centroid. Usage: gen_icon.py <hicolor_dir>
 """
 import os
 import sys
@@ -19,6 +20,7 @@ ORANGE = (217, 119, 87, 255)   # Claude orange (#D97757)
 HERE = os.path.dirname(os.path.abspath(__file__))
 CURSOR_PNG = os.path.join(HERE, "cursor.png")
 TARGET_H = 270                 # cursor height within the 512 canvas (~56% of the square)
+BLEND = 0.5                    # anchor = lerp(bbox-center, centroid); 0=bbox, 1=centroid
 
 _cursor = None                 # (image, centroid_x, centroid_y) cache
 
@@ -46,8 +48,10 @@ def draw(size):
     src, cx, cy = _cursor_src()
     s = TARGET_H / src.height
     cur = src.resize((round(src.width * s), TARGET_H), Image.LANCZOS)
-    # place so the cursor's centroid lands at the canvas center
-    im.alpha_composite(cur, (round(S / 2 - cx * s), round(S / 2 - cy * s)))
+    # anchor = blend of bbox-center (src.w/2, src.h/2) and centroid (cx, cy)
+    ax = src.width / 2 + BLEND * (cx - src.width / 2)
+    ay = src.height / 2 + BLEND * (cy - src.height / 2)
+    im.alpha_composite(cur, (round(S / 2 - ax * s), round(S / 2 - ay * s)))
     if size != S:
         im = im.resize((size, size), Image.LANCZOS)
     return im
