@@ -10,6 +10,14 @@ Claude Code Display Plugin. You can see it and drive it. Reach for it whenever a
 touches a web page or GUI: checking that a page renders, testing a login or a form, reading
 a rendered dashboard, walking through a web flow, or reproducing a UI bug.
 
+> **This display is your workspace — stay on it.** The virtual display these tools drive is
+> yours and is isolated from the **human's real screen**. Do everything GUI-related here,
+> through these tools. Do **not** try to reach or drive the human's actual desktop, and do
+> **not** use other browser-automation or GUI tools — Playwright, Selenium, `xdotool`
+> directly, or launching a browser from the shell — to do this work. Those act on the
+> human's real machine and will take over their screen. If a task needs a browser or any
+> GUI, it lives here, on your display, via `open_url` / `screenshot` / `click` / etc.
+
 ## How to use it
 
 Work in a **see → act → see** loop. The display is stateful, so look before and after each
@@ -31,6 +39,9 @@ step:
   its center in that image's coordinates. Don't guess coordinates without a fresh screenshot.
 - **It's driven like a human.** Input is real OS-level mouse/keyboard, so pages that block
   automated browsers generally behave normally here.
+- **Only ever use *this* display.** Never reach for Playwright/Selenium or a shell-launched
+  browser to accomplish a GUI task — those drive the human's real screen. This display is
+  the only sanctioned place to use a browser or GUI.
 - **The display is shared and persistent** across sessions in this directory — another
   session may have left a page open. Screenshot first to see the current state.
 - **The user can watch live** in the dashboard app (`ccdp ui`), and take control if needed.

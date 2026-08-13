@@ -39,10 +39,25 @@ def pid_alive(pid):
 
 
 def x_env(display):
-    """Environment for X clients targeting our Xvfb — the key Wayland-host fix:
-    scrub the compositor env so Chrome/x11vnc use the X display, not Wayland."""
+    """Environment for X clients targeting our Xvfb — keeps the virtual display a
+    self-contained world instead of borrowing the host session. Two isolations:
+
+    * Wayland-host fix: scrub the compositor env so Chrome/x11vnc use the X
+      display, not Wayland (otherwise black captures / x11vnc refuses to start).
+    * Audio isolation: the display is perceived purely as pixels — screenshots
+      and VNC carry no audio — so a sandboxed app has no legitimate place to send
+      sound. Detached apps otherwise inherit the host's PulseAudio/PipeWire
+      sockets and leak page audio straight to the human's speakers (the
+      "water-drip" noise). Point the audio-server vars at dead sockets so the
+      display simply has no sound card, for every app on it, not just the browser.
+    """
     e = dict(os.environ, DISPLAY=display, XDG_SESSION_TYPE="x11")
     e.pop("WAYLAND_DISPLAY", None)
+    # No sound card in this sandbox: sever the host audio servers. An explicit
+    # (dead) PULSE_SERVER also stops the client from autospawning its own daemon.
+    e["PULSE_SERVER"] = "unix:/nonexistent/ccdp-no-audio"
+    e["PIPEWIRE_REMOTE"] = "ccdp-no-audio"
+    e.pop("PULSE_SINK", None)
     return e
 
 

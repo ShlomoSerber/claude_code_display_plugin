@@ -1,17 +1,19 @@
 """Render PNG fallbacks of the app icon (for launchers that don't read SVG).
-Matches icon.svg: a solid Claude-orange rounded square with a centered white
-mouse cursor. Usage: gen_icon.py <hicolor_dir>"""
+
+Matches icon.svg: a solid Claude-orange rounded square with a free cursor icon
+(Material Design Icons "cursor-default", Apache-2.0) composited in the middle.
+The cursor is pre-rasterised (white fill + black border) as cursor.png next to
+this script, so this stays Pillow-only at build time. Usage: gen_icon.py <hicolor_dir>
+"""
 import os
 import sys
 
 from PIL import Image, ImageDraw
 
 ORANGE = (217, 119, 87, 255)   # Claude orange (#D97757)
-WHITE = (255, 255, 255, 255)
-BLACK = (0, 0, 0, 255)
-# Canonical arrow cursor, bounding-box centered in the 512 square:
-# vertical left edge, 45deg notch, 45deg top edge, a true parallelogram tail (no taper).
-CURSOR = [(168, 112), (168, 368), (232, 304), (280, 400), (312, 384), (264, 288), (344, 288)]
+HERE = os.path.dirname(os.path.abspath(__file__))
+CURSOR_PNG = os.path.join(HERE, "cursor.png")
+TARGET_H = 300                 # cursor height within the 512 canvas (~62% of the square)
 
 
 def draw(size):
@@ -19,8 +21,10 @@ def draw(size):
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
     d.rounded_rectangle([16, 16, 496, 496], radius=112, fill=ORANGE)
-    d.polygon(CURSOR, fill=WHITE)
-    d.line(CURSOR + [CURSOR[0]], fill=BLACK, width=12, joint="curve")  # black border
+    cur = Image.open(CURSOR_PNG).convert("RGBA")
+    w = round(cur.width * TARGET_H / cur.height)
+    cur = cur.resize((w, TARGET_H), Image.LANCZOS)
+    im.alpha_composite(cur, ((S - w) // 2, (S - TARGET_H) // 2))
     if size != S:
         im = im.resize((size, size), Image.LANCZOS)
     return im
