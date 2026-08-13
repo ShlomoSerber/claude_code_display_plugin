@@ -9,7 +9,9 @@ from PIL import Image, ImageDraw
 ORANGE = (217, 119, 87, 255)   # Claude orange (#D97757)
 WHITE = (255, 255, 255, 255)
 BLACK = (0, 0, 0, 255)
-CURSOR = [(176, 130), (176, 346), (224, 300), (258, 376), (300, 358), (268, 286), (338, 286)]
+# Canonical arrow cursor, bounding-box centered in the 512 square:
+# vertical left edge, 45deg notch, 45deg top edge, a true parallelogram tail (no taper).
+CURSOR = [(168, 112), (168, 368), (232, 304), (280, 400), (312, 384), (264, 288), (344, 288)]
 
 
 def draw(size):
