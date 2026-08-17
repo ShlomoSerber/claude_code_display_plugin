@@ -13,7 +13,8 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, applyplugin, bugs, claudecli, paths, registry, sandbox, surfaces
+from . import (__version__, applyplugin, claudecli, paths, registry, reports, sandbox,
+               surfaces, util)
 
 PREVIEW_WIDTH = 720
 STREAM_FPS = 3
@@ -30,7 +31,7 @@ def _state():
                 claude=dict(installed=claudecli.installed(), version=claudecli.version()),
                 sandbox=sandbox.enabled(),
                 plugin=applyplugin.status(),
-                surfaces=surf, bugs=len(bugs.list_bugs()))
+                surfaces=surf, reports=reports.counts())
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -71,6 +72,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._asset(path[len("/static/"):])
         if path == "/api/state":
             return self._send(200, _state())
+        if path == "/api/reports":
+            q = parse_qs(parsed.query)
+            kind = (q.get("kind") or ["all"])[0]
+            if kind == "all":
+                return self._send(200, {"reports": reports.all_reports(100)})
+            try:
+                return self._send(200, {"reports": reports.store(kind).list(100)})
+            except ValueError as e:
+                return self._send(400, {"error": str(e)})
         if path.startswith("/surface/") and path.endswith("/stream.mjpeg"):
             q = parse_qs(parsed.query)
             try:
@@ -104,6 +114,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/remove-plugin":
                 return self._send(200, applyplugin.remove())
             parts = path.strip("/").split("/")
+            # /api/reports/<kind>/<id>/archive — dismiss, keeping the file
+            if len(parts) == 5 and parts[:2] == ["api", "reports"] and parts[4] == "archive":
+                try:
+                    ok = reports.store(parts[2]).archive(parts[3])
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
+                return self._send(200 if ok else 404, {"ok": ok})
             if len(parts) == 4 and parts[0] == "api" and parts[1] == "surface":
                 key, action = parts[2], parts[3]
                 if action == "close":
@@ -121,9 +138,12 @@ class Handler(BaseHTTPRequestHandler):
                         surfaces.scroll(key, body["x"], body["y"], int(body.get("amount", 1)))
                     elif a == "type":
                         surfaces.type_text(key, body.get("text", ""))
-                    elif a == "key":
-                        surfaces.press_key(key, body.get("keys", ""))
+                    elif a == "key" and body.get("keys"):
+                        surfaces.press_key(key, body["keys"])
                     return self._send(200, {"ok": True})
+                if action == "recover":
+                    return self._send(200, dict(ok=True, **surfaces.recover(
+                        key, restart_browser=bool(body.get("restart_browser")))))
                 if action == "control":
                     url = surfaces.start_control(key)
                     return self._send(200, {"ok": True, "url": url})

@@ -12,7 +12,7 @@ import os
 import sys
 import traceback
 
-from . import bugs, paths, registry, surfaces, util
+from . import paths, registry, reports, surfaces, util
 
 PROJECT_DIR = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 SESSION_ID = os.environ.get("CCDP_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
@@ -48,8 +48,22 @@ TOOLS = [
          description="Type text into whatever is currently focused on the display.",
          inputSchema={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}),
     dict(name="press_key",
-         description="Press a key or chord, xdotool syntax (e.g. 'Return', 'Escape', 'ctrl+a', 'ctrl+l').",
-         inputSchema={"type": "object", "properties": {"keys": {"type": "string"}}, "required": ["keys"]}),
+         description="Press a key or chord on the display. The argument is named 'keys' and takes "
+                     "xdotool syntax: 'Return', 'Escape', 'ctrl+a', 'ctrl+l', 'F5' — or a sequence "
+                     "separated by spaces, e.g. 'ctrl+l Return'.",
+         inputSchema={"type": "object", "properties": {
+             "keys": {"type": "string",
+                      "description": "Key or chord, xdotool syntax, e.g. 'Return' or 'ctrl+l'."}},
+             "required": ["keys"]}),
+    dict(name="recover_display",
+         description="Unstick the display when it stops responding: input seems to do nothing, the "
+                     "screenshot never changes, or a stray window/menu has taken over. Dismisses "
+                     "anything modal, puts focus back on the browser's main window and forces a full "
+                     "repaint. Set restart_browser=true only if that didn't help — it reloads the "
+                     "browser and loses page state. Also fixes a page that is painting stale pixels.",
+         inputSchema={"type": "object", "properties": {
+             "restart_browser": {"type": "boolean", "default": False,
+                                 "description": "Last resort: restart the browser on this display."}}}),
     dict(name="list_surfaces",
          description="List the active displays this program is managing and their status.",
          inputSchema={"type": "object", "properties": {}}),
@@ -60,7 +74,51 @@ TOOLS = [
              "summary": {"type": "string"}, "details": {"type": "string"},
              "severity": {"type": "string", "enum": ["low", "normal", "high"], "default": "normal"}},
              "required": ["summary"]}),
+    dict(name="record_feedback",
+         description="Leave feedback on this display program itself — not on the site you're looking "
+                     "at. Use it when nothing is broken but something could be better: friction you "
+                     "worked around, a capability you wished existed, a tool description that misled "
+                     "you, or something that worked well and should stay. Stored locally next to bug "
+                     "reports for the developer to act on; you are the one using these tools, so your "
+                     "view is the point. Use record_bug instead when something is actually broken.",
+         inputSchema={"type": "object", "properties": {
+             "summary": {"type": "string", "description": "One line: what would be better, and why."},
+             "details": {"type": "string",
+                         "description": "What you were doing, what you expected, what you'd suggest."},
+             "category": {"type": "string",
+                          "enum": ["friction", "feature_request", "docs", "performance", "praise", "other"],
+                          "default": "other"}},
+             "required": ["summary"]}),
 ]
+
+_MISSING = object()
+
+
+def _arg(args, *names, default=_MISSING, cast=None):
+    """Read an argument, accepting the obvious aliases for its name.
+
+    Clients don't always send the exact key from the schema (filed bug: every
+    press_key call failed with a bare KeyError on 'keys'). Taking the synonym is
+    better than failing the action, and when nothing matches the error says what
+    arrived instead of just naming the key that didn't."""
+    for n in names:
+        if isinstance(args, dict) and args.get(n) is not None:
+            v = args[n]
+            return cast(v) if cast else v
+    if default is not _MISSING:
+        return default
+    got = ", ".join(sorted(args)) if args else "no arguments"
+    raise ValueError(f"missing required argument {names[0]!r} (got: {got})")
+
+
+def _int(v):
+    return int(round(float(str(v).strip())))
+
+
+def _bool(v):
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
 
 
 def _key():
@@ -75,51 +133,82 @@ def _err(s):
     return {"content": [{"type": "text", "text": s}], "isError": True}
 
 
+STUCK_HINT = ("\n\n⚠ The display has not changed at all across the last {n} input actions. It is "
+              "probably stuck (a stray window or menu holding focus, or a wedged browser). Call "
+              "recover_display, then screenshot again, before sending more input.")
+
+
 def call_tool(name, args):
     key = _key()
     if name == "open_url":
-        surfaces.ensure(PROJECT_DIR, url=args["url"])
-        return _text(f"Opened {args['url']}. Call screenshot to see the page.")
+        url = _arg(args, "url", "uri", "address", "link", "href")
+        surfaces.ensure(PROJECT_DIR, url=url)
+        return _text(f"Opened {url}. Call screenshot to see the page.")
     if name == "screenshot":
         surfaces.ensure(PROJECT_DIR)
-        png, w, h, _ = surfaces.screenshot_png(key)
+        png, w, h, _, stale = surfaces.screenshot_png(key, track=True)
+        text = f"Display is {w}x{h}px. Coordinates for click/move are pixels here."
+        if stale >= 3:
+            text += STUCK_HINT.format(n=stale)
         return {"content": [
-            {"type": "text", "text": f"Display is {w}x{h}px. Coordinates for click/move are pixels here."},
+            {"type": "text", "text": text},
             {"type": "image", "data": base64.b64encode(png).decode(), "mimeType": "image/png"}]}
     if name == "click":
+        x, y = _arg(args, "x", cast=_int), _arg(args, "y", cast=_int)
         surfaces.ensure(PROJECT_DIR)
-        surfaces.click(key, args["x"], args["y"], args.get("button", 1), bool(args.get("double")))
-        return _text(f"Clicked ({args['x']},{args['y']}). Call screenshot to see the result.")
+        surfaces.click(key, x, y, _arg(args, "button", default=1, cast=_int),
+                       _arg(args, "double", "double_click", default=False, cast=_bool))
+        return _text(f"Clicked ({x},{y}). Call screenshot to see the result.")
     if name == "move":
-        from . import inputs
+        x, y = _arg(args, "x", cast=_int), _arg(args, "y", cast=_int)
         surfaces.ensure(PROJECT_DIR)
-        rec = registry.get(key)
-        with inputs.input_lock(key):
-            inputs.move(rec["display"], args["x"], args["y"])
-        return _text(f"Moved to ({args['x']},{args['y']}).")
+        surfaces.move(key, x, y)
+        return _text(f"Moved to ({x},{y}).")
     if name == "scroll":
+        x, y = _arg(args, "x", cast=_int), _arg(args, "y", cast=_int)
+        amount = _arg(args, "amount", "clicks", "steps", "delta", "dy", cast=_int)
         surfaces.ensure(PROJECT_DIR)
-        surfaces.scroll(key, args["x"], args["y"], args["amount"])
+        surfaces.scroll(key, x, y, amount)
         return _text("Scrolled. Call screenshot to see the result.")
     if name == "type_text":
+        text = _arg(args, "text", "string", "value", "content")
         surfaces.ensure(PROJECT_DIR)
-        surfaces.type_text(key, args["text"])
+        surfaces.type_text(key, text)
         return _text("Typed. Call screenshot to see the result.")
     if name == "press_key":
+        keys = _arg(args, "keys", "key", "combo", "chord", "shortcut", "keysym", "key_combination")
         surfaces.ensure(PROJECT_DIR)
-        surfaces.press_key(key, args["keys"])
-        return _text(f"Pressed {args['keys']}.")
+        surfaces.press_key(key, keys)
+        pressed = " ".join(k for k in (keys if isinstance(keys, (list, tuple)) else [keys]))
+        return _text(f"Pressed {pressed}. Call screenshot to see the result.")
+    if name == "recover_display":
+        surfaces.ensure(PROJECT_DIR)
+        info = surfaces.recover(key, restart_browser=_arg(args, "restart_browser", "restart",
+                                                          default=False, cast=_bool))
+        return _text("Recovery on " + info["display"] + ":\n- " + "\n- ".join(info["steps"])
+                     + "\n\nCall screenshot to see the display now."
+                     + ("" if info["restarted"] else
+                        " If it is still stuck, call recover_display with restart_browser=true."))
     if name == "list_surfaces":
         data = registry.all_surfaces()
         lines = [f"{r['key']} {r['display']} {r['project_dir']} "
                  f"(pss {surfaces.pss_mb(r)}MB)" for r in data.values()]
         return _text("Active displays:\n" + ("\n".join(lines) if lines else "(none)"))
     if name == "record_bug":
-        info = bugs.record(args["summary"], details=args.get("details"),
-                           severity=args.get("severity", "normal"), tool="mcp",
-                           session_id=SESSION_ID, project_dir=PROJECT_DIR,
-                           surface=registry.get(key))
+        info = reports.BUGS.record(
+            _arg(args, "summary", "title"),
+            details=_arg(args, "details", "description", "body", default=None),
+            severity=_arg(args, "severity", default="normal"), tool="mcp",
+            session_id=SESSION_ID, project_dir=PROJECT_DIR, surface=registry.get(key))
         return _text(f"Recorded bug {info['id']} at {info['path']}. The user can pass this to the developer.")
+    if name == "record_feedback":
+        info = reports.FEEDBACK.record(
+            _arg(args, "summary", "title", "feedback"),
+            details=_arg(args, "details", "description", "body", default=None),
+            category=_arg(args, "category", "kind", "type", default="other"), tool="mcp",
+            session_id=SESSION_ID, project_dir=PROJECT_DIR, surface=registry.get(key))
+        return _text(f"Recorded feedback {info['id']} at {info['path']}. It goes to the developer "
+                     "alongside the bug reports — thanks.")
     return _err(f"unknown tool: {name}")
 
 
@@ -147,7 +236,14 @@ def handle(msg):
         try:
             result = call_tool(name, args)
         except Exception as e:
-            util.log(f"tool {name} failed: {e}\n{traceback.format_exc()}", component="mcp")
+            # Log the arguments too: without them a failure like a bare KeyError
+            # names the key that was missing but never what the client actually sent.
+            try:
+                shown = json.dumps(args)[:600]
+            except (TypeError, ValueError):
+                shown = repr(args)[:600]
+            util.log(f"tool {name} failed: {e!r} args={shown}\n{traceback.format_exc()}",
+                     component="mcp")
             result = _err(f"{name} failed: {e}. You can call record_bug to report this.")
         return {"jsonrpc": "2.0", "id": mid, "result": result}
     if method in ("shutdown", "exit"):

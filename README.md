@@ -17,20 +17,24 @@ display live and take control over VNC.
 - A **display** (virtual X server via Xvfb) with a browser on it, created on demand.
 - **Tools in every Claude Code session** to use it (pure-vision):
   `open_url`, `screenshot`, `click`, `move`, `scroll`, `type_text`, `press_key`,
-  `list_surfaces`, and `record_bug`.
+  `recover_display`, `list_surfaces`, `record_bug`, and `record_feedback`.
 - A **dashboard** (`ccdp ui`) that shows every live display as a stream, with per-display
-  memory, a full-control (VNC) button, and — if Claude Code isn't installed yet — a prompt
-  to install it and a button to apply the plugin once it is.
-- A **bug tool**: if a display tool fails mid-session, Claude can call `record_bug`, which
-  writes a report to `~/.local/state/ccdp/bugs/` for you to hand to the developer.
+  memory, a full-control (VNC) button, a per-display **Recover** button, the reports
+  sessions have filed, and — if Claude Code isn't installed yet — a prompt to install it and
+  a button to apply the plugin once it is.
+- **A way back to the developer.** If a display tool fails mid-session, Claude calls
+  `record_bug`; if the program merely *could be better* — friction, a missing capability, a
+  misleading tool description — Claude calls `record_feedback`. Both write reports under
+  `~/.local/state/ccdp/` for you to hand over (`ccdp reports` prints them). The agent using
+  the program is the one best placed to say what's wrong with it, so it's given a channel.
 
 ## Install
 
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.1.0_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.1.0_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.2.0_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.2.0_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -95,9 +99,9 @@ ccdp/            the runtime package
   inputs.py        xdotool wrappers + per-surface input lock
   sandbox.py       bubblewrap wrapper (opt-in)
   mcp_server.py    the stdio MCP server (tools for a session)
-  dashboard.py     the local web UI (state API, MJPEG, apply-plugin)
+  dashboard.py     the local web UI (state API, MJPEG, apply-plugin, reports)
   applyplugin.py   register the plugin with Claude Code
-  bugs.py          bug store
+  reports.py       bug + feedback store
   cli.py           `ccdp` entrypoint
 assets/dashboard/  the UI (html/css/js)
 plugin/            the Claude Code plugin, shipped as a local marketplace
@@ -121,5 +125,8 @@ multi-model "operator" loop, richer human take-over in-browser, and cross-platfo
 (this targets Linux first).
 
 ## Data locations
-- State/registry/logs/bugs/profiles: `~/.local/state/ccdp/`
+- State/registry/logs/reports/profiles: `~/.local/state/ccdp/`
 - Bug reports: `~/.local/state/ccdp/bugs/*.json`
+- Feedback: `~/.local/state/ccdp/feedback/*.json`
+- Both, readably: `ccdp reports [all|bug|feedback]`. Dismissing one in the dashboard moves
+  the file to an `archive/` subdirectory rather than deleting it.

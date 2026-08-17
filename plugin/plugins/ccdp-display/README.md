@@ -8,8 +8,11 @@ in a project directory gets a sandboxed virtual display it can see and drive.
 - `screenshot()` — capture the display as an image; coordinates below are pixels in it
 - `click(x, y, button?, double?)`, `move(x, y)`, `scroll(x, y, amount)`
 - `type_text(text)`, `press_key(keys)`
+- `recover_display(restart_browser?)` — unstick a display that stopped responding
 - `list_surfaces()` — the displays being managed
 - `record_bug(summary, details?, severity?)` — file a bug when a display tool misbehaves
+- `record_feedback(summary, details?, category?)` — file feedback when it works but could be
+  better: friction, a missing capability, a suggestion
 
 The display is created lazily on first use and shared by all sessions in the same
 directory. Watch it live in the dashboard: run `ccdp ui`.

@@ -48,6 +48,32 @@ def _surfaces():
     return 0
 
 
+def _reports(kind, limit, as_json):
+    from . import reports
+    items = reports.all_reports(limit) if kind == "all" else reports.store(kind).list(limit)
+    if as_json:
+        print(json.dumps(items, indent=2))
+        return 0
+    if not items:
+        print("(nothing filed — sessions record these with record_bug / record_feedback)")
+        return 0
+    for r in items:
+        tag = r.get("severity") if r.get("kind") == "bug" else r.get("category")
+        print(f"[{(r.get('kind') or '?').upper():<8}] {r.get('created_iso','')}  "
+              f"{r.get('id','')}  ({tag or '-'})")
+        print(f"  {r.get('summary','').strip()}")
+        if r.get("project_dir"):
+            print(f"  dir: {r['project_dir']}")
+        if r.get("details"):
+            body = r["details"].strip().splitlines()
+            for line in body[:12]:
+                print(f"  | {line}")
+            if len(body) > 12:
+                print(f"  | ... ({len(body) - 12} more lines — see the JSON in {paths.STATE_DIR})")
+        print()
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="ccdp", description="Claude Code Display Plugin")
     sub = p.add_subparsers(dest="cmd")
@@ -61,6 +87,13 @@ def main(argv=None):
     sub.add_parser("remove-plugin", help="unregister the plugin from Claude Code")
     sub.add_parser("plugin-status", help="print plugin/claude status as JSON")
     sub.add_parser("surfaces", help="list active surfaces")
+    rp = sub.add_parser("reports", help="show the bug reports and feedback sessions have filed")
+    rp.add_argument("kind", nargs="?", default="all", choices=["all", "bug", "feedback"])
+    rp.add_argument("--limit", type=int, default=50)
+    rp.add_argument("--json", action="store_true", dest="as_json")
+    rc = sub.add_parser("recover", help="unstick a surface by key (refocus + repaint)")
+    rc.add_argument("key")
+    rc.add_argument("--restart-browser", action="store_true")
     sub.add_parser("session-start", help="hook: housekeeping at session start")
     sub.add_parser("reap", help="close idle surfaces")
     c = sub.add_parser("close", help="close a surface by key")
@@ -96,6 +129,14 @@ def main(argv=None):
         return 0
     if args.cmd == "surfaces":
         return _surfaces()
+    if args.cmd == "reports":
+        return _reports(args.kind, args.limit, args.as_json)
+    if args.cmd == "recover":
+        from . import surfaces
+        info = surfaces.recover(args.key, restart_browser=args.restart_browser)
+        for step in info["steps"]:
+            print(f"- {step}")
+        return 0
     if args.cmd == "session-start":
         from . import surfaces
         try:

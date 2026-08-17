@@ -39,7 +39,15 @@ bash packaging/build-deb.sh                        # -> dist/*.deb
 MCP smoke test: pipe newline-delimited JSON-RPC (`initialize`, `tools/list`, `tools/call`)
 into `python3 -m ccdp mcp` and read the responses on stdout.
 
-## Fixing reported bugs
-Bugs filed by the `record_bug` tool land in `~/.local/state/ccdp/bugs/*.json` with the
-session, project directory, and surface state attached. That's the intended feedback loop:
-the user hands those reports over for fixes.
+## Fixing reported bugs, reading feedback
+Sessions file two kinds of report through the MCP tools, both stored by `reports.py` with
+the session, project directory, and surface state attached:
+
+- `record_bug` → `~/.local/state/ccdp/bugs/*.json` — something broke.
+- `record_feedback` → `~/.local/state/ccdp/feedback/*.json` — it works, but here's friction,
+  a missing capability, or a suggestion.
+
+`ccdp reports` prints both. That's the intended feedback loop: the agent using the program
+is the one best placed to say what's wrong with it, and the user hands those reports over.
+Reports are written by the agent, not the user — read them as field notes, and check the
+claim against the code before acting on it.

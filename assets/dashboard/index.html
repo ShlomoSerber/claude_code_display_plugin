@@ -21,6 +21,17 @@
     <p id="empty" class="muted">No displays yet. Open a project in a Claude Code session and use the
        display tools, or they'll appear here automatically.</p>
   </section>
+
+  <!-- what the sessions have said back: bug reports and feedback -->
+  <section class="reports">
+    <div class="shead">
+      <h2>From the sessions</h2>
+      <span id="rcount" class="muted"></span>
+      <span class="grow"></span>
+      <button id="rtoggle" class="btn sm">Show</button>
+    </div>
+    <div id="rlist" class="rlist hidden"></div>
+  </section>
 </main>
 
 <template id="tile">
@@ -35,6 +46,7 @@
     <div class="actions">
       <button class="btn sm icon expand" title="Fullscreen (view only)"></button>
       <button class="btn sm control">Control display</button>
+      <button class="btn sm recover" title="Unstick this display: dismiss menus, refocus the browser, force a repaint">Recover</button>
       <span class="grow"></span>
       <button class="btn sm danger close">Close</button>
     </div>

@@ -33,6 +33,19 @@ step:
 4. **Verify:** call `screenshot()` again to confirm the result before the next action. Don't
    fire several blind actions in a row — read the screen between them.
 
+## When the display stops responding
+
+Occasionally input stops landing: clicks and keys do nothing, `open_url` reports success but
+the page never changes, and every screenshot comes back identical. Usually a stray window or
+an open menu has taken focus, or the browser has wedged. A screenshot warns you when it
+notices this, and the fix is `recover_display()` — it dismisses anything modal, puts focus
+back on the browser's main window and forces a full repaint. Screenshot again afterwards. If
+it's *still* frozen, call `recover_display(restart_browser=true)`: that restarts the browser
+on the same display (you lose page state, so try the plain call first).
+
+`recover_display()` is also the fix when the page paints something visibly wrong — stale
+colours, a region that didn't update — since it forces the browser to re-render everything.
+
 ## What to keep in mind
 
 - **Read the pixels, then aim.** Take a screenshot, find the target in the image, and click
@@ -47,6 +60,13 @@ step:
 - **The user can watch live** in the dashboard app (`ccdp ui`), and take control if needed.
 - **If a display tool fails or misbehaves, call `record_bug`** with a clear summary and what
   you were doing. That report goes to the developer to fix.
+- **If something merely *could be better*, call `record_feedback`.** Not about the site you're
+  looking at — about these display tools themselves: friction you had to work around, a
+  capability you wished existed, a tool description that pointed you the wrong way, an
+  awkward loop, or something that worked well and should stay. You are the one actually using
+  this program, so your view is the whole point of the tool; the developer reads these
+  alongside the bug reports. One line of specific feedback beats none — file it as you notice
+  it rather than saving it for the end of the task.
 
 ## When NOT to use it
 

@@ -96,7 +96,6 @@ function renderSurfaces(state) {
   const seen = new Set();
   const live = state.surfaces.filter(s => s.alive);
   $("#empty").classList.toggle("hidden", live.length > 0);
-  $("#bugcount").textContent = state.bugs ? (state.bugs + " bug report(s) recorded") : "";
 
   for (const s of live) {
     seen.add(s.key);
@@ -109,6 +108,14 @@ function renderSurfaces(state) {
       t.querySelector(".expand").innerHTML = ICON_EXPAND;
       t.querySelector(".expand").onclick = () => openStage(t.dataset.key, "view", +t.dataset.w, +t.dataset.h);
       t.querySelector(".control").onclick = () => openStage(t.dataset.key, "control", +t.dataset.w, +t.dataset.h);
+      t.querySelector(".recover").onclick = async (e) => {
+        const b = e.currentTarget, label = b.textContent;
+        b.disabled = true; b.style.minWidth = b.offsetWidth + "px";
+        b.innerHTML = '<span class="spinner"></span>';
+        try { await api(`/api/surface/${t.dataset.key}/recover`, { method: "POST", body: "{}" }); }
+        catch (err) { /* ignore */ }
+        b.disabled = false; b.textContent = label;
+      };
       t.querySelector(".close").onclick = async () => {
         await api(`/api/surface/${s.key}/close`, { method: "POST" }); load();
       };
@@ -125,11 +132,73 @@ function renderSurfaces(state) {
   }
 }
 
+/* ---------- reports: what sessions filed back (bugs + feedback) ---------- */
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let reportsOpen = false;
+
+function reportCard(r) {
+  const bug = r.kind === "bug";
+  const tag = bug ? (r.severity || "normal") : (r.category || "other").replace("_", " ");
+  const where = (r.project_dir || "").split("/").filter(Boolean).pop() || "";
+  const meta = [r.created_iso || "", where, r.version ? "v" + r.version : ""].filter(Boolean);
+  return `<article class="rpt">
+    <div class="rtop">
+      <span class="badge ${bug ? "bug" : "fb"}">${bug ? "Bug" : "Feedback"}</span>
+      <span class="badge soft">${esc(tag)}</span>
+      <span class="grow"></span>
+      <button class="btn sm" data-kind="${esc(r.kind)}" data-id="${esc(r.id)}">Dismiss</button>
+    </div>
+    <p class="rsum">${esc(r.summary)}</p>
+    ${r.details ? `<details><summary class="muted">Details</summary><pre>${esc(r.details)}</pre></details>` : ""}
+    <div class="rmeta muted">${esc(meta.join(" · "))}</div>
+  </article>`;
+}
+
+async function loadReports() {
+  const list = $("#rlist");
+  try {
+    const d = await api("/api/reports");
+    const items = (d && d.reports) || [];
+    list.innerHTML = items.length
+      ? items.map(reportCard).join("")
+      : `<p class="muted">Nothing filed yet. Sessions can call <code>record_bug</code> when a display
+         tool breaks and <code>record_feedback</code> to suggest improvements.</p>`;
+    list.querySelectorAll("button[data-id]").forEach(b => {
+      b.onclick = async () => {
+        b.disabled = true;
+        await api(`/api/reports/${b.dataset.kind}/${b.dataset.id}/archive`, { method: "POST" });
+        loadReports(); load();
+      };
+    });
+  } catch (e) { /* server not ready */ }
+}
+
+$("#rtoggle").onclick = () => {
+  reportsOpen = !reportsOpen;
+  $("#rlist").classList.toggle("hidden", !reportsOpen);
+  $("#rtoggle").textContent = reportsOpen ? "Hide" : "Show";
+  if (reportsOpen) loadReports();
+};
+
+let reportSig = "";
+function renderReportCount(state) {
+  const c = (state && state.reports) || {};
+  const parts = [];
+  if (c.bug) parts.push(c.bug + (c.bug === 1 ? " bug report" : " bug reports"));
+  if (c.feedback) parts.push(c.feedback + " feedback");
+  $("#rcount").textContent = parts.length ? parts.join(" · ") : "nothing filed";
+  const sig = `${c.bug || 0}/${c.feedback || 0}`;          // only redraw when something arrived,
+  if (reportsOpen && sig !== reportSig) loadReports();      // so open details stay open
+  reportSig = sig;
+}
+
 async function load() {
   try {
     const state = await api("/api/state");
     renderGate(state);
     renderSurfaces(state);
+    renderReportCount(state);
   } catch (e) { /* server not ready */ }
 }
 load();

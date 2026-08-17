@@ -19,6 +19,7 @@ RUNTIME_DIR = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or os.path.join(STA
 SURFACES_JSON = os.path.join(STATE_DIR, "surfaces.json")
 SURFACES_LOCK = os.path.join(STATE_DIR, "surfaces.lock")
 BUGS_DIR = os.path.join(STATE_DIR, "bugs")
+FEEDBACK_DIR = os.path.join(STATE_DIR, "feedback")
 LOG_DIR = os.path.join(STATE_DIR, "logs")
 PROFILES_DIR = os.path.join(STATE_DIR, "profiles")
 
@@ -33,7 +34,7 @@ CLAUDE_PLUGINS_DIR = os.path.join(CLAUDE_DIR, "plugins")
 
 
 def ensure_dirs():
-    for d in (STATE_DIR, CONFIG_DIR, RUNTIME_DIR, BUGS_DIR, LOG_DIR, PROFILES_DIR):
+    for d in (STATE_DIR, CONFIG_DIR, RUNTIME_DIR, BUGS_DIR, FEEDBACK_DIR, LOG_DIR, PROFILES_DIR):
         os.makedirs(d, exist_ok=True)
 
 
