@@ -33,8 +33,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.2.0_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.2.0_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.2.1_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.2.1_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,

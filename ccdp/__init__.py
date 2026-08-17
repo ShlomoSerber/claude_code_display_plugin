@@ -8,5 +8,5 @@ and feedback against this program.
 This package is the runtime: surface lifecycle, capture, input, the MCP server,
 and the dashboard. See README.md for the full picture.
 """
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 PROGRAM_NAME = "Claude Code Display Plugin"

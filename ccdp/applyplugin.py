@@ -51,16 +51,24 @@ def apply():
                       "out": (out or "").strip()[-600:], "err": (err or "").strip()[-600:]})
         return rc
 
+    # Claude Code caches the plugin per version, so a first-time `add` + `install`
+    # is a no-op once anything is installed — after a .deb upgrade that silently
+    # leaves sessions on the old skill and tool list. Refresh the marketplace from
+    # its source and update the plugin too; each step is a no-op when it's already
+    # current, so this is also the right sequence for a first install.
     step([claude, "plugin", "marketplace", "add", paths.PLUGIN_SRC_DIR])
+    step([claude, "plugin", "marketplace", "update", MARKETPLACE_NAME])
     rc = step([claude, "plugin", "install", PLUGIN_REF])
+    rc_update = step([claude, "plugin", "update", PLUGIN_REF])
 
-    ok = rc == 0
+    ok = rc == 0 or rc_update == 0
     if ok:
         _mark(True)
     return {
         "ok": ok,
         "message": ("Plugin applied. Open a new Claude Code session in a project directory "
-                    "and the display tools will be available." if ok else
+                    "and the display tools will be available (restart any session that is "
+                    "already open — it keeps the plugin it started with)." if ok else
                     "The plugin CLI returned an error — see steps. You may need to run "
                     f"'/plugin marketplace add {paths.PLUGIN_SRC_DIR}' inside Claude Code, "
                     "then '/plugin install ccdp-display'."),
