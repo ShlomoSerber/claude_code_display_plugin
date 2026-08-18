@@ -71,7 +71,38 @@ def _reports(kind, limit, as_json):
             if len(body) > 12:
                 print(f"  | ... ({len(body) - 12} more lines — see the JSON in {paths.STATE_DIR})")
         print()
+    print("Actioned? Clear them: ccdp archive <id>... | ccdp archive --all "
+          "(files move to archive/, nothing is deleted)")
     return 0
+
+
+def _archive(ids, archive_all, kind):
+    """Clear reports that have been actioned. The point of the queue is to empty
+    it — a report that has been fixed or implemented should stop being shown."""
+    from . import reports
+    stores = list(reports.STORES.values()) if kind == "all" else [reports.store(kind)]
+    if archive_all:
+        n = 0
+        for st in stores:
+            for r in st.list(1000):
+                if st.archive(r["id"]):
+                    print(f"archived {st.kind} {r['id']}  {r.get('summary','').strip()[:70]}")
+                    n += 1
+        print(f"({n} archived, queue now empty)" if n else "(nothing active to archive)")
+        return 0
+    if not ids:
+        print("give report ids, or --all to clear the queue "
+              "(ids come from `ccdp reports`)")
+        return 2
+    missing = []
+    for rid in ids:
+        if any(st.archive(rid) for st in stores):
+            print(f"archived {rid}")
+        else:
+            missing.append(rid)
+    for rid in missing:
+        print(f"no active report {rid} (already archived?)")
+    return 1 if missing else 0
 
 
 def main(argv=None):
@@ -91,6 +122,12 @@ def main(argv=None):
     rp.add_argument("kind", nargs="?", default="all", choices=["all", "bug", "feedback"])
     rp.add_argument("--limit", type=int, default=50)
     rp.add_argument("--json", action="store_true", dest="as_json")
+    ar = sub.add_parser("archive", help="clear reports that have been actioned "
+                                        "(moves them to archive/, does not delete)")
+    ar.add_argument("ids", nargs="*", help="report ids from `ccdp reports`")
+    ar.add_argument("--all", action="store_true", dest="all_reports",
+                    help="archive every active report")
+    ar.add_argument("--kind", default="all", choices=["all", "bug", "feedback"])
     rc = sub.add_parser("recover", help="unstick a surface by key (refocus + repaint)")
     rc.add_argument("key")
     rc.add_argument("--restart-browser", action="store_true")
@@ -131,6 +168,8 @@ def main(argv=None):
         return _surfaces()
     if args.cmd == "reports":
         return _reports(args.kind, args.limit, args.as_json)
+    if args.cmd == "archive":
+        return _archive(args.ids, args.all_reports, args.kind)
     if args.cmd == "recover":
         from . import surfaces
         info = surfaces.recover(args.key, restart_browser=args.restart_browser)

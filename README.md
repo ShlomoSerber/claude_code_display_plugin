@@ -33,8 +33,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.2.1_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.2.1_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.2.2_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.2.2_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -128,5 +128,7 @@ multi-model "operator" loop, richer human take-over in-browser, and cross-platfo
 - State/registry/logs/reports/profiles: `~/.local/state/ccdp/`
 - Bug reports: `~/.local/state/ccdp/bugs/*.json`
 - Feedback: `~/.local/state/ccdp/feedback/*.json`
-- Both, readably: `ccdp reports [all|bug|feedback]`. Dismissing one in the dashboard moves
-  the file to an `archive/` subdirectory rather than deleting it.
+- Both, readably: `ccdp reports [all|bug|feedback]`.
+- Once a report has been actioned, clear it — `ccdp archive <id>`, `ccdp archive --all`, or
+  the dashboard's **Dismiss** button. All three move the file to an `archive/` subdirectory
+  rather than deleting it, so the queue shows only what still needs attention.

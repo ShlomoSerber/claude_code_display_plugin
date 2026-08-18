@@ -51,3 +51,15 @@ the session, project directory, and surface state attached:
 is the one best placed to say what's wrong with it, and the user hands those reports over.
 Reports are written by the agent, not the user — read them as field notes, and check the
 claim against the code before acting on it.
+
+**Clear the queue as you action it.** A report that has been fixed, implemented, or
+deliberately declined must stop being shown, or the queue silently turns into a pile of
+stale garbage and nobody reads it. Archive it in the same task that actions it:
+
+```bash
+ccdp archive <id> [<id>...]     # ids come from `ccdp reports`
+ccdp archive --all              # everything actioned in one go
+```
+
+Archiving moves the file to `archive/` — it is reversible and nothing is deleted, so the
+history is still there. The dashboard's per-report **Dismiss** button does the same thing.
