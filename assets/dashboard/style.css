@@ -60,7 +60,15 @@ code{background:var(--ground);padding:1px 6px;border-radius:5px;font-size:.92em}
 
 /* reports filed by sessions: bugs + feedback */
 .reports{margin-top:28px}
-.reports .shead .grow{flex:1}
+/* the heading itself is the disclosure control: title + chevron, left-aligned */
+.reports .shead{align-items:center}
+.disc{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;
+  display:inline-flex;align-items:center;gap:7px}
+.disc .chev{display:inline-flex;color:var(--soft);transition:transform .15s ease}
+.disc:hover .chev{color:var(--ink)}
+.disc.open .chev{transform:rotate(180deg)}
+.disc:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+@media (prefers-reduced-motion:reduce){.disc .chev{transition:none}}
 .rlist{display:flex;flex-direction:column;gap:10px}
 .rpt{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
 .rtop{display:flex;align-items:center;gap:8px}

@@ -4,6 +4,7 @@ const api = (p, o) => fetch(p, o).then(r => r.json());
 
 const ICON_EXPAND = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"/></svg>';
 const ICON_COLLAPSE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v5H3M16 3v5h5M3 16h5v5M21 16h-5v5"/></svg>';
+const ICON_CHEV = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 
 // Live view via frame-polling (works in Chrome and WebKitGTK, which doesn't do MJPEG).
 // Preloads the next frame off-screen and swaps on load to avoid flicker.
@@ -174,10 +175,12 @@ async function loadReports() {
   } catch (e) { /* server not ready */ }
 }
 
+$("#rtoggle .chev").innerHTML = ICON_CHEV;      // points down when closed, up when open
 $("#rtoggle").onclick = () => {
   reportsOpen = !reportsOpen;
   $("#rlist").classList.toggle("hidden", !reportsOpen);
-  $("#rtoggle").textContent = reportsOpen ? "Hide" : "Show";
+  $("#rtoggle").classList.toggle("open", reportsOpen);
+  $("#rtoggle").setAttribute("aria-expanded", String(reportsOpen));
   if (reportsOpen) loadReports();
 };
 
