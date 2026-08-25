@@ -7,6 +7,10 @@ in a project directory gets a sandboxed virtual display it can see and drive.
 - `open_url(url)` — open a page (types the URL into the address bar, human-like)
 - `screenshot()` — capture the display as an image; coordinates below are pixels in it
 - `click(x, y, button?, double?)`, `move(x, y)`, `scroll(x, y, amount)`
+- `drag(x1, y1, x2, y2, button?, steps?)` — press, travel, release: drag-and-drop, moving or
+  resizing a window, dragging a slider
+- `mouse_down(x, y, button?)` / `mouse_up(x?, y?, button?)` — hold the button across calls, so
+  a screenshot can catch the drag in progress
 - `type_text(text)`, `press_key(keys)`
 - `recover_display(restart_browser?)` — unstick a display that stopped responding
 - `list_surfaces()` — the displays being managed

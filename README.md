@@ -16,8 +16,9 @@ display live and take control over VNC.
 
 - A **display** (virtual X server via Xvfb) with a browser on it, created on demand.
 - **Tools in every Claude Code session** to use it (pure-vision):
-  `open_url`, `screenshot`, `click`, `move`, `scroll`, `type_text`, `press_key`,
-  `recover_display`, `list_surfaces`, `record_bug`, and `record_feedback`.
+  `open_url`, `screenshot`, `click`, `move`, `drag`, `mouse_down`, `mouse_up`,
+  `scroll`, `type_text`, `press_key`, `recover_display`, `list_surfaces`,
+  `record_bug`, and `record_feedback`.
 - A **dashboard** (`ccdp ui`) that shows every live display as a stream, with per-display
   memory, a full-control (VNC) button, a per-display **Recover** button, the reports
   sessions have filed, and — if Claude Code isn't installed yet — a prompt to install it and
@@ -33,8 +34,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.2.2_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.2.2_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.3.0_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.3.0_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -75,10 +76,37 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
   environment scrubbed and `--ozone-platform=x11`, or Chrome renders to nothing and
   captures come back black; `x11vnc` needs the same. This is handled in `util.x_env()` and
   `surfaces.CHROME_FLAGS`.
+- **Press-and-hold gestures are first class:** `drag(x1,y1,x2,y2)` presses, travels in
+  small steps and releases — the intermediate moves are what make HTML5 drag-and-drop and
+  pointermove handlers fire at all. `mouse_down` / `mouse_up` hold the button across calls,
+  so a screenshot taken mid-gesture shows the drop guide, the hover highlight and the window
+  ghost. A button left down is released by `recover_display`.
 - **Pure-vision by design:** `screenshot` returns the display at native resolution; all
   input coordinates are pixels in that image (1:1). Navigation types the URL into the
   address bar like a person. This was validated in testing: models ground clicks on these
   screenshots reliably.
+
+## Reaching a backend behind a proxy or VPN
+
+The managed browser talks to the network directly. When the app under test needs a tunnel —
+an internal API reachable only through SOCKS5, say — set these in the environment of the
+session that *creates* the display:
+
+```bash
+export CCDP_PROXY=socks5://127.0.0.1:1080   # every request goes through the proxy
+export CCDP_BROWSER_FLAGS="--lang=es"       # any extra browser flags, verbatim
+```
+
+For a SOCKS proxy `CCDP_PROXY` also sends DNS through the tunnel (Chrome resolves locally
+otherwise, which fails for names that only exist on the far side) while leaving `localhost`
+resolving normally, so an app on `127.0.0.1` still loads. It adds `--test-type` with it,
+purely to suppress Chrome's unsupported-flag infobar — that bar would push every page down
+~44px and quietly break the 1:1 match between a screenshot and a click.
+
+The flags are read when the display is created and stored on the surface record, so a later
+relaunch or `recover_display` keeps them. `list_surfaces` shows them. Starting a second
+browser of your own on the display is not an option: these displays run no window manager,
+so a second Chrome starts but never maps a window.
 
 ## Sandboxing
 

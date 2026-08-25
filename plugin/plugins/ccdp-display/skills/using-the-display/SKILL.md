@@ -1,6 +1,6 @@
 ---
 name: using-the-display
-description: Use whenever a task involves viewing, testing, navigating, filling in, or interacting with a website, web app, browser, or any graphical UI — or reproducing a visual/UI bug. This project has a real virtual display with a browser that you can see (screenshots) and drive with human-like mouse and keyboard input via the display tools (open_url, screenshot, click, type_text, press_key, scroll).
+description: Use whenever a task involves viewing, testing, navigating, filling in, or interacting with a website, web app, browser, or any graphical UI — or reproducing a visual/UI bug. This project has a real virtual display with a browser that you can see (screenshots) and drive with human-like mouse and keyboard input via the display tools (open_url, screenshot, click, drag, type_text, press_key, scroll).
 ---
 
 # Using the display
@@ -30,8 +30,27 @@ step:
 3. **Act:** `click(x, y)`, `double_click` via `click(x, y, double=true)`, `move(x, y)`,
    `scroll(x, y, amount)` (negative = up), `type_text("...")` into the focused field,
    `press_key("Return" | "Escape" | "ctrl+a" | "ctrl+l" | ...)`.
+   To press and hold — drag-and-drop, moving or resizing a window by its title bar or edge,
+   dragging a slider or a selection — use `drag(x1, y1, x2, y2)`; see below.
 4. **Verify:** call `screenshot()` again to confirm the result before the next action. Don't
    fire several blind actions in a row — read the screen between them.
+
+## Dragging and other press-and-hold gestures
+
+`click` presses and releases at one point, so it can never express a drag. Two tools do:
+
+- **`drag(x1, y1, x2, y2, button?, steps?)`** — the 90% case. It presses at the first point,
+  travels to the second in small steps, then releases. Those intermediate moves matter:
+  HTML5 drag-and-drop and pointermove gestures only fire `dragover` when the pointer really
+  moves between the press and the release, so a single jump drops nothing.
+- **`mouse_down(x, y)` … `mouse_up(x, y)`** — for multi-leg gestures and, above all, for
+  *looking mid-drag*. The button stays held across calls, so you can `mouse_down`, `move`
+  over a target, `screenshot` the drop guide / highlight / window ghost, move on to another
+  target, and only then `mouse_up`. Those intermediate states are invisible to `drag`.
+
+**Always release what you press.** A button left down captures the pointer and makes
+everything afterwards behave strangely. If you lose track, `recover_display()` releases it,
+and `list_surfaces()` shows a warning while a button is still held.
 
 ## When the display stops responding
 
@@ -55,6 +74,11 @@ colours, a region that didn't update — since it forces the browser to re-rende
 - **Only ever use *this* display.** Never reach for Playwright/Selenium or a shell-launched
   browser to accomplish a GUI task — those drive the human's real screen. This display is
   the only sanctioned place to use a browser or GUI.
+- **The browser goes straight out to the network.** If the app's backend only exists behind
+  a tunnel or VPN, the display must be created with `CCDP_PROXY` (e.g.
+  `socks5://127.0.0.1:1080`) or `CCDP_BROWSER_FLAGS` set in the environment — see the
+  project README. Don't start a browser of your own on the display: there is no window
+  manager here, so a second browser starts but never shows a window.
 - **The display is shared and persistent** across sessions in this directory — another
   session may have left a page open. Screenshot first to see the current state.
 - **The user can watch live** in the dashboard app (`ccdp ui`), and take control if needed.

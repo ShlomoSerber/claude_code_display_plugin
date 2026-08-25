@@ -22,6 +22,11 @@ The README above describes the program. Notes specific to editing it:
   `WAYLAND_DISPLAY` unset / `XDG_SESSION_TYPE=x11` and Chrome with `--ozone-platform=x11`,
   or you get black captures and x11vnc refuses to start. Centralised in `util.x_env()` and
   `surfaces.CHROME_FLAGS`; change them there, not per-call.
+- **Browser flags:** the base set lives in `surfaces.CHROME_FLAGS`; per-display extras come
+  from the environment via `surfaces.extra_browser_flags()` (`CCDP_PROXY`,
+  `CCDP_BROWSER_FLAGS`) and are stored on the surface record so a relaunch keeps them.
+- **Held mouse buttons:** `mouse_down` without `mouse_up` leaves the pointer captured. The
+  held buttons live in the registry (`buttons_down`) so `recover()` can release them.
 - **Per-session MCP reality:** Claude Code spawns one MCP server per session, so shared
   state lives in the flock-guarded registry (`registry.py`) and surface processes are
   detached (`start_new_session=True`). Never assume a long-lived daemon.

@@ -46,6 +46,55 @@ def double_click(display, x, y, button=1):
                    "click", "--repeat", "2", "--delay", "80", str(button)])
 
 
+# ---- press-and-hold gestures (drag-and-drop, moving/resizing a window) ----
+# A press that outlives one call: `xdotool mousedown` leaves the button held in
+# the X server after the process exits, so mouse_down/mouse_up bracket any number
+# of moves and screenshots. Whoever presses must release — surfaces.py records the
+# held buttons in the registry and recover() releases them.
+
+def mouse_down(display, x=None, y=None, button=1):
+    args = []
+    if x is not None and y is not None:
+        args += ["mousemove", str(int(x)), str(int(y)), "sleep", "0.05"]
+    args += ["mousedown", str(int(button))]
+    _xdo(display, args)
+
+
+def mouse_up(display, x=None, y=None, button=1):
+    args = []
+    if x is not None and y is not None:
+        args += ["mousemove", str(int(x)), str(int(y)), "sleep", "0.05"]
+    args += ["mouseup", str(int(button))]
+    _xdo(display, args)
+
+
+def release_buttons(display, buttons=(1, 2, 3)):
+    args = []
+    for b in buttons:
+        args += ["mouseup", str(int(b))]
+    if args:
+        _xdo(display, args)
+
+
+def drag(display, x1, y1, x2, y2, button=1, steps=24, hold=0.12, settle=0.25):
+    """Press at (x1,y1), travel to (x2,y2) in `steps` intermediate moves, release.
+
+    The intermediate moves are the point: HTML5 drag-and-drop and pointermove
+    gestures only fire dragover/dragenter when the pointer actually moves between
+    the press and the release, so a single jump to the target drops nothing. The
+    pause before the release lets the drop target's handlers run."""
+    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+    steps = max(2, min(int(steps), 200))
+    args = ["mousemove", str(x1), str(y1), "sleep", "0.05",
+            "mousedown", str(int(button)), "sleep", f"{max(0.0, float(hold)):.3f}"]
+    for i in range(1, steps + 1):
+        t = i / steps
+        args += ["mousemove", str(round(x1 + (x2 - x1) * t)), str(round(y1 + (y2 - y1) * t)),
+                 "sleep", "0.02"]
+    args += ["sleep", f"{max(0.0, float(settle)):.3f}", "mouseup", str(int(button))]
+    _xdo(display, args, timeout=int(20 + steps * 0.2))
+
+
 def scroll(display, x, y, amount):
     button = "4" if amount < 0 else "5"  # 4 = up, 5 = down
     args = ["mousemove",str(int(x)), str(int(y))]

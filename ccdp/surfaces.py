@@ -5,6 +5,7 @@ MCP server that spawned them; the registry file is the shared source of truth.
 """
 import hashlib
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -35,6 +36,44 @@ CHROME_FLAGS = [
     "--disable-checker-imaging",     # no placeholder-then-fix-up image raster
     "--ui-disable-partial-swap",     # browser UI: always swap the full frame
 ]
+
+
+def extra_browser_flags():
+    """Opt-in extra flags for the managed browser, from the environment.
+
+    The browser otherwise talks to the network directly, which leaves out any app
+    whose backend only exists behind a tunnel or VPN (filed feedback: an API
+    reachable solely through a SOCKS5 tunnel, with remote DNS). A second browser
+    of your own is not an option — these displays have no window manager, so a
+    second Chrome starts but never maps a window.
+
+    - `CCDP_PROXY=socks5://127.0.0.1:1080` — proxy every request. For a SOCKS
+      proxy it also forces DNS through the tunnel (Chrome resolves locally
+      otherwise, which fails for names that only exist on the far side), while
+      leaving localhost resolving normally.
+    - `CCDP_BROWSER_FLAGS="--flag=a --flag=b"` — appended verbatim, shell-quoted.
+
+    Both are read when the display is created; the flags are stored on the surface
+    record so a later relaunch or recover() keeps them.
+    """
+    flags = []
+    proxy = (os.environ.get("CCDP_PROXY") or "").strip()
+    if proxy:
+        flags.append(f"--proxy-server={proxy}")
+        if proxy.lower().startswith("socks"):
+            # Resolve names through the tunnel, not locally, and keep localhost local.
+            # --test-type only suppresses Chrome's "unsupported command-line flag"
+            # infobar: that bar pushes the page down ~44px and would silently break
+            # the 1:1 pixel contract between a screenshot and a click.
+            flags += ["--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE localhost", "--test-type"]
+    extra = (os.environ.get("CCDP_BROWSER_FLAGS") or "").strip()
+    if extra:
+        try:
+            flags += shlex.split(extra)
+        except ValueError as e:
+            util.log(f"ignoring CCDP_BROWSER_FLAGS ({e}): {extra!r}", component="surfaces")
+    return flags
+
 
 # Chrome refuses to reuse a profile whose singleton lock looks live; after a hard
 # kill these can linger and block the relaunch in recover().
@@ -117,10 +156,13 @@ def _clear_singleton(profile):
             pass
 
 
-def _launch_browser(browser, profile, project_dir, display, url):
+def _launch_browser(browser, profile, project_dir, display, url, flags=None):
     os.makedirs(profile, exist_ok=True)
     _clear_singleton(profile)
-    cmd = [browser, *CHROME_FLAGS, f"--user-data-dir={profile}", url or "about:blank"]
+    flags = list(flags if flags is not None else extra_browser_flags())
+    if flags:
+        util.log(f"browser on {display} gets extra flags: {' '.join(flags)}", component="surfaces")
+    cmd = [browser, *CHROME_FLAGS, *flags, f"--user-data-dir={profile}", url or "about:blank"]
     cmd = sandbox.wrap(cmd, profile_dir=profile, project_dir=os.path.realpath(project_dir),
                        display=display)
     return _spawn(cmd, util.x_env(display), f"chrome{display[1:]}.log")
@@ -156,11 +198,13 @@ def ensure(project_dir, *, url=None):
         raise SurfaceError(f"Xvfb {display} did not come up")
 
     profile = paths.profile_dir(key)
-    chrome_pid = _launch_browser(browser, profile, project_dir, display, url)
+    flags = extra_browser_flags()
+    chrome_pid = _launch_browser(browser, profile, project_dir, display, url, flags)
 
     rec = registry.upsert(key, dict(
         key=key, project_dir=os.path.realpath(project_dir), display=display,
         xvfb_pid=xvfb_pid, chrome_pid=chrome_pid, vnc_port=None, browser=browser,
+        browser_flags=flags,
         width=WIDTH, height=HEIGHT, created=time.time(), last_active=time.time(),
         last_url=url, input_seq=0, frame_seq=0, frame_hash=None))
     util.log(f"created surface {key} on {display} for {project_dir}", component="surfaces")
@@ -242,6 +286,39 @@ def move(key, x, y):
         inputs.move(rec["display"], x, y)
 
 
+def _held(rec):
+    try:
+        return [int(b) for b in (rec.get("buttons_down") or [])]
+    except (TypeError, ValueError):
+        return []
+
+
+def mouse_down(key, x, y, button=1):
+    """Press and hold. The button stays down across later calls, so screenshots
+    taken mid-gesture show drag guides, hover highlights and drop targets."""
+    rec = _require(key)
+    with inputs.input_lock(key):
+        inputs.mouse_down(rec["display"], x, y, button)
+    registry.upsert(key, dict(buttons_down=sorted(set(_held(rec)) | {int(button)})))
+    _bump_input(key, rec)
+
+
+def mouse_up(key, x=None, y=None, button=1):
+    rec = _require(key)
+    with inputs.input_lock(key):
+        inputs.mouse_up(rec["display"], x, y, button)
+    registry.upsert(key, dict(buttons_down=[b for b in _held(rec) if b != int(button)]))
+    _bump_input(key, rec)
+
+
+def drag(key, x1, y1, x2, y2, button=1, steps=24):
+    rec = _require(key)
+    with inputs.input_lock(key):
+        inputs.drag(rec["display"], x1, y1, x2, y2, button=button, steps=steps)
+    registry.upsert(key, dict(buttons_down=[b for b in _held(rec) if b != int(button)]))
+    _bump_input(key, rec)
+
+
 def scroll(key, x, y, amount):
     rec = _require(key)
     with inputs.input_lock(key):
@@ -300,13 +377,22 @@ def recover(key, *, restart_browser=False):
         util.terminate(rec.get("chrome_pid"))
         pid = _launch_browser(rec.get("browser") or find_browser(), paths.profile_dir(key),
                               rec.get("project_dir") or os.getcwd(), display,
-                              rec.get("last_url") or "about:blank")
+                              rec.get("last_url") or "about:blank",
+                              rec.get("browser_flags"))
         registry.upsert(key, dict(chrome_pid=pid))
         time.sleep(2.5)
         steps.append(f"relaunched the browser (pid {pid}) at {rec.get('last_url') or 'about:blank'}")
         rec = registry.get(key)
 
     with inputs.input_lock(key):
+        held = _held(rec)
+        if held:
+            # A mouse_down without its mouse_up wedges everything: the pointer
+            # stays captured, so clicks land on the dragging widget, not the page.
+            inputs.release_buttons(display, held)
+            registry.upsert(key, dict(buttons_down=[]))
+            steps.append("released mouse button(s) " + ", ".join(str(b) for b in held)
+                         + " that were still held down from an unfinished drag")
         inputs.key(display, "Escape")
         steps.append("sent Escape to dismiss any open menu or dialog")
         wins = inputs.windows(display)

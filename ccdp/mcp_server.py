@@ -21,7 +21,10 @@ DEFAULT_PROTOCOL = "2025-06-18"
 TOOLS = [
     dict(name="open_url",
          description="Open a web page on this project's display by typing the URL into the "
-                     "browser address bar (human-like). Creates the display if needed.",
+                     "browser address bar (human-like). Creates the display if needed. The "
+                     "browser reaches the network directly; to send it through a proxy or "
+                     "tunnel, the display must be created with CCDP_PROXY (e.g. "
+                     "socks5://127.0.0.1:1080) or CCDP_BROWSER_FLAGS set in the environment.",
          inputSchema={"type": "object", "properties": {"url": {"type": "string"}},
                       "required": ["url"]}),
     dict(name="screenshot",
@@ -39,6 +42,39 @@ TOOLS = [
          description="Move the mouse to pixel (x, y) without clicking (e.g. to reveal a hover state).",
          inputSchema={"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
                       "required": ["x", "y"]}),
+    dict(name="drag",
+         description="Press the mouse at (x1, y1), move to (x2, y2), release — the gesture "
+                     "click cannot express: drag-and-drop, moving or resizing a window by its "
+                     "title bar or edge, dragging a slider or a selection. It travels in small "
+                     "steps, which HTML5 drag-and-drop and pointermove handlers need in order "
+                     "to fire at all. Use mouse_down/mouse_up instead when you need to see the "
+                     "screen mid-drag or pass over several targets.",
+         inputSchema={"type": "object", "properties": {
+             "x1": {"type": "integer", "description": "Where the press starts."},
+             "y1": {"type": "integer"},
+             "x2": {"type": "integer", "description": "Where the release happens."},
+             "y2": {"type": "integer"},
+             "button": {"type": "integer", "default": 1},
+             "steps": {"type": "integer", "default": 24,
+                       "description": "Intermediate moves between press and release (2-200). "
+                                      "More steps = slower, smoother drag."}},
+             "required": ["x1", "y1", "x2", "y2"]}),
+    dict(name="mouse_down",
+         description="Press a mouse button at (x, y) and HOLD it. The button stays down across "
+                     "later calls, so you can move, screenshot the drag in progress (drop "
+                     "guides, highlights, the window ghost), pass over several targets, then "
+                     "release with mouse_up. Always finish with mouse_up — a button left down "
+                     "makes everything afterwards behave strangely; recover_display releases it.",
+         inputSchema={"type": "object", "properties": {
+             "x": {"type": "integer"}, "y": {"type": "integer"},
+             "button": {"type": "integer", "default": 1}},
+             "required": ["x", "y"]}),
+    dict(name="mouse_up",
+         description="Release a held mouse button, optionally moving to (x, y) first. Pairs with "
+                     "mouse_down.",
+         inputSchema={"type": "object", "properties": {
+             "x": {"type": "integer"}, "y": {"type": "integer"},
+             "button": {"type": "integer", "default": 1}}}),
     dict(name="scroll",
          description="Scroll at (x, y). amount negative = up, positive = down (number of wheel steps).",
          inputSchema={"type": "object", "properties": {
@@ -164,6 +200,32 @@ def call_tool(name, args):
         surfaces.ensure(PROJECT_DIR)
         surfaces.move(key, x, y)
         return _text(f"Moved to ({x},{y}).")
+    if name == "drag":
+        x1 = _arg(args, "x1", "from_x", "start_x", "sx", cast=_int)
+        y1 = _arg(args, "y1", "from_y", "start_y", "sy", cast=_int)
+        x2 = _arg(args, "x2", "to_x", "end_x", "ex", cast=_int)
+        y2 = _arg(args, "y2", "to_y", "end_y", "ey", cast=_int)
+        button = _arg(args, "button", default=1, cast=_int)
+        steps = _arg(args, "steps", "n_steps", default=24, cast=_int)
+        surfaces.ensure(PROJECT_DIR)
+        surfaces.drag(key, x1, y1, x2, y2, button, steps)
+        return _text(f"Dragged ({x1},{y1}) → ({x2},{y2}) with button {button} in {steps} steps. "
+                     "Call screenshot to see the result.")
+    if name == "mouse_down":
+        x, y = _arg(args, "x", cast=_int), _arg(args, "y", cast=_int)
+        button = _arg(args, "button", default=1, cast=_int)
+        surfaces.ensure(PROJECT_DIR)
+        surfaces.mouse_down(key, x, y, button)
+        return _text(f"Button {button} is now held down at ({x},{y}). Move, screenshot the drag "
+                     "in progress, then release it with mouse_up.")
+    if name == "mouse_up":
+        x = _arg(args, "x", default=None, cast=_int)
+        y = _arg(args, "y", default=None, cast=_int)
+        button = _arg(args, "button", default=1, cast=_int)
+        surfaces.ensure(PROJECT_DIR)
+        surfaces.mouse_up(key, x, y, button)
+        where = f" at ({x},{y})" if x is not None and y is not None else ""
+        return _text(f"Released button {button}{where}. Call screenshot to see the result.")
     if name == "scroll":
         x, y = _arg(args, "x", cast=_int), _arg(args, "y", cast=_int)
         amount = _arg(args, "amount", "clicks", "steps", "delta", "dy", cast=_int)
@@ -191,8 +253,15 @@ def call_tool(name, args):
                         " If it is still stuck, call recover_display with restart_browser=true."))
     if name == "list_surfaces":
         data = registry.all_surfaces()
-        lines = [f"{r['key']} {r['display']} {r['project_dir']} "
-                 f"(pss {surfaces.pss_mb(r)}MB)" for r in data.values()]
+        lines = []
+        for r in data.values():
+            line = f"{r['key']} {r['display']} {r['project_dir']} (pss {surfaces.pss_mb(r)}MB)"
+            if r.get("browser_flags"):
+                line += " browser flags: " + " ".join(r["browser_flags"])
+            if r.get("buttons_down"):
+                line += " ⚠ mouse button(s) held down: " + \
+                        ", ".join(str(b) for b in r["buttons_down"])
+            lines.append(line)
         return _text("Active displays:\n" + ("\n".join(lines) if lines else "(none)"))
     if name == "record_bug":
         info = reports.BUGS.record(
