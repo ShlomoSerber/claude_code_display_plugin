@@ -41,10 +41,15 @@ def _surfaces():
     if not data:
         print("(no active surfaces)")
         return 0
+    live = [r for r in data.values() if surfaces._alive(r)]
+    print(f"{len(live)} of a maximum {surfaces.MAX_DISPLAYS} displays running "
+          "(cap: CCDP_MAX_DISPLAYS)\n")
     for r in data.values():
-        alive = surfaces._alive(r)
-        print(f"{r['key']}  {r['display']}  pss={surfaces.pss_mb(r)}MB  "
-              f"{'live' if alive else 'dead'}  {r['project_dir']}")
+        if surfaces._alive(r):
+            print(surfaces.describe(r))
+        else:
+            print(f"  {r['key']}  {r.get('display')}  dead  {r.get('project_dir')}")
+    print("\nClose one: ccdp close <id>")
     return 0
 
 
@@ -128,12 +133,13 @@ def main(argv=None):
     ar.add_argument("--all", action="store_true", dest="all_reports",
                     help="archive every active report")
     ar.add_argument("--kind", default="all", choices=["all", "bug", "feedback"])
-    rc = sub.add_parser("recover", help="unstick a surface by key (refocus + repaint)")
+    rc = sub.add_parser("recover", help="unstick a surface (refocus + repaint); "
+                                       "id, :NN, label or directory")
     rc.add_argument("key")
     rc.add_argument("--restart-browser", action="store_true")
     sub.add_parser("session-start", help="hook: housekeeping at session start")
     sub.add_parser("reap", help="close idle surfaces")
-    c = sub.add_parser("close", help="close a surface by key")
+    c = sub.add_parser("close", help="close a surface by id, :NN, label or directory")
     c.add_argument("key")
     sub.add_parser("version", help="print version")
 
@@ -172,7 +178,8 @@ def main(argv=None):
         return _archive(args.ids, args.all_reports, args.kind)
     if args.cmd == "recover":
         from . import surfaces
-        info = surfaces.recover(args.key, restart_browser=args.restart_browser)
+        info = surfaces.recover(surfaces.resolve(args.key),
+                                restart_browser=args.restart_browser)
         for step in info["steps"]:
             print(f"- {step}")
         return 0
@@ -189,7 +196,9 @@ def main(argv=None):
         return 0
     if args.cmd == "close":
         from . import surfaces
-        surfaces.close(args.key)
+        key = surfaces.resolve(args.key)
+        surfaces.close(key)
+        print(f"closed {key}")
         return 0
     if args.cmd == "version":
         print(__version__)

@@ -52,6 +52,33 @@ step:
 everything afterwards behave strangely. If you lose track, `recover_display()` releases it,
 and `list_surfaces()` shows a warning while a button is still held.
 
+## Working alongside other agents
+
+Most of the time there is one display and you never think about it: call the tools with no
+`display` argument and they act on this working directory's display.
+
+It matters when several agents work the same repository at once. Each git worktree is its
+own workspace and gets its own display, so lanes don't collide by accident. Two things keep
+it honest when they do share a directory:
+
+- **Every response names the display it acted on** and the page on it, like
+  `[display 59613d0db7db :102 — http://localhost:3011/ — board-shifts]`. **Read that line
+  before you trust a screenshot.** If it shows a URL that isn't your lane's, you are looking
+  at another agent's work — a wrong answer that looks right. The line says
+  `ANOTHER SESSION'S DISPLAY` when the display was created by someone else.
+- **`list_surfaces()`** shows every display with its id, its directory, the page it has open
+  and who is using it. `*` marks the one your calls go to.
+
+To take a display of your own: **`new_display(url?, label?)`**. It creates an extra one with
+its own id and points your calls at it — label it with your lane or branch so it is
+recognisable. To act on a specific display without changing which one is yours, pass
+`display=` (the id, an unambiguous prefix of it, `:102`, a label, or a directory path); an
+explicit `display` then sticks for your later calls until you name another.
+
+Displays are expensive — each is a real browser, roughly 0.9GB, and the total is capped.
+Call **`release_display()`** when you're finished with one you created. `recover_display`
+and `release_display` only ever touch the display you address; the others keep running.
+
 ## When the display stops responding
 
 Occasionally input stops landing: clicks and keys do nothing, `open_url` reports success but
@@ -80,7 +107,9 @@ colours, a region that didn't update — since it forces the browser to re-rende
   project README. Don't start a browser of your own on the display: there is no window
   manager here, so a second browser starts but never shows a window.
 - **The display is shared and persistent** across sessions in this directory — another
-  session may have left a page open. Screenshot first to see the current state.
+  session may have left a page open. Screenshot first to see the current state, and read the
+  `[display ...]` line in the reply to confirm it is showing your page and not someone
+  else's. If another agent is driving it, take your own with `new_display`.
 - **The user can watch live** in the dashboard app (`ccdp ui`), and take control if needed.
 - **If a display tool fails or misbehaves, call `record_bug`** with a clear summary and what
   you were doing. That report goes to the developer to fix.

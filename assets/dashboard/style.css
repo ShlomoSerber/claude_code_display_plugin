@@ -53,8 +53,12 @@ code{background:var(--ground);padding:1px 6px;border-radius:5px;font-size:.92em}
 .thead .dpy{color:var(--accent-ink);font-weight:700}
 .view{background:#000;aspect-ratio:16/10;display:flex;align-items:center;justify-content:center}
 .view img{width:100%;height:100%;object-fit:contain;display:block}
-.path{padding:8px 14px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;
+.thead .tag{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);
+  color:var(--soft);max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.path{padding:8px 14px 2px;font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;border-top:1px solid var(--line)}
+.url{padding:0 14px 8px;font-size:11.5px;color:var(--soft);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
 .actions{display:flex;gap:8px;align-items:center;padding:11px 14px;border-top:1px solid var(--line)}
 .actions .grow{flex:1}
 

@@ -124,9 +124,13 @@ function renderSurfaces(state) {
       grid.appendChild(t);
     }
     t.dataset.key = s.key; t.dataset.w = s.width; t.dataset.h = s.height;
-    t.querySelector(".dpy").textContent = s.display;
+    t.querySelector(".dpy").textContent = `${s.display}  ${s.key}`;
+    const tag = t.querySelector(".tag");
+    tag.textContent = s.label || "";
+    tag.classList.toggle("hidden", !s.label);
     t.querySelector(".pss").textContent = s.pss_mb + " MB";
     t.querySelector(".path").textContent = s.project_dir || "";
+    t.querySelector(".url").textContent = s.url || "about:blank";
   }
   for (const [key, t] of tiles) {
     if (!seen.has(key)) { if (t._stopPoll) t._stopPoll(); t.remove(); tiles.delete(key); }

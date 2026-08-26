@@ -1,10 +1,11 @@
 # Claude Code Display Plugin
 
-Gives every Claude Code session, **per project directory, a sandboxed virtual display
-it can see and drive the way a human would** — screenshots out, real mouse/keyboard
-input in, no app-specific channels (no CDP, no DOM, no accessibility tree). The first
-session opened in a directory creates the display; later sessions in the same directory
-share it; a new directory gets its own. A local dashboard app lets you watch every
+Gives every Claude Code session **a sandboxed virtual display it can see and drive the
+way a human would** — screenshots out, real mouse/keyboard input in, no app-specific
+channels (no CDP, no DOM, no accessibility tree). The first session in a working
+directory creates the display; later sessions there share it; another directory — or
+another git worktree of the same repository — gets its own. An agent that needs a
+browser to itself asks for an extra one. A local dashboard app lets you watch every
 display live and take control over VNC.
 
 > The brand name is still pending. In code and docs this is just "the program" or its
@@ -18,7 +19,9 @@ display live and take control over VNC.
 - **Tools in every Claude Code session** to use it (pure-vision):
   `open_url`, `screenshot`, `click`, `move`, `drag`, `mouse_down`, `mouse_up`,
   `scroll`, `type_text`, `press_key`, `recover_display`, `list_surfaces`,
-  `record_bug`, and `record_feedback`.
+  `new_display`, `release_display`, `record_bug`, and `record_feedback`.
+  Every one of the acting tools takes an optional `display`, and every response says
+  which display it acted on.
 - A **dashboard** (`ccdp ui`) that shows every live display as a stream, with per-display
   memory, a full-control (VNC) button, a per-display **Recover** button, the reports
   sessions have filed, and — if Claude Code isn't installed yet — a prompt to install it and
@@ -34,8 +37,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.3.0_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.3.0_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.4.0_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.4.0_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -67,11 +70,13 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
                           dashboard (`ccdp ui`)─┘  live MJPEG view + controls
 ```
 
-- **One display per project directory**, keyed by `CLAUDE_PROJECT_DIR`. Because Claude
-  Code runs a *separate* MCP server per session, shared state lives in a registry file and
-  the Xvfb/browser processes are started **detached** so they outlive any one session. A
-  file lock serialises input so two sessions can't fight over the pointer. Idle displays are
-  reaped after 30 minutes.
+- **One display per workspace by default.** A workspace is the git worktree root of the
+  session's working directory, falling back to `CLAUDE_PROJECT_DIR` outside a repository.
+  Because Claude Code runs a *separate* MCP server per session, shared state lives in a
+  registry file and the Xvfb/browser processes are started **detached** so they outlive any
+  one session. A file lock serialises input so two sessions can't fight over the pointer.
+  Idle displays are reaped after 30 minutes; the total is capped (`CCDP_MAX_DISPLAYS`,
+  default 6) because each display is a whole browser.
 - **Launch recipe (important on Wayland hosts):** X apps are started with the Wayland
   environment scrubbed and `--ozone-platform=x11`, or Chrome renders to nothing and
   captures come back black; `x11vnc` needs the same. This is handled in `util.x_env()` and
@@ -85,6 +90,52 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
   input coordinates are pixels in that image (1:1). Navigation types the URL into the
   address bar like a person. This was validated in testing: models ground clicks on these
   screenshots reliably.
+
+## Parallel agents: more than one display
+
+Several agents working the same repository at once — one git worktree each, each with its
+own stack on its own ports — need a browser each. Two things make that work.
+
+**Worktrees key apart.** The display key is the *worktree root* of the session's working
+directory (`git rev-parse --show-toplevel`), not the repository. Three lanes of one repo are
+three workspaces and get three displays, even when the lanes live inside the main checkout
+at `<repo>/.claude/worktrees/<lane>` and every session reports the same
+`CLAUDE_PROJECT_DIR`. `--git-common-dir` deliberately resolves to the shared repository, so
+it is not used here; nothing walks up looking for `.git` either. Override with
+`CCDP_DISPLAY_DIR` when neither rule fits.
+
+**Displays are addressable, and every answer says which one it came from.** Each acting tool
+takes an optional `display`, which accepts the id `list_surfaces` prints (or an unambiguous
+prefix), an X display (`:101`), a label, or a directory path:
+
+```
+Active displays (2 of a maximum 6). '*' marks the one this session's calls go to.
+
+* 59613d0db7db  :102  pss 336.4MB
+    dir:   /home/you/farmagram/.claude/worktrees/board-shifts
+    page:  http://localhost:3011/  — "Farmagram · Board"
+    used by: this session
+  cc5f2dcd22e8  :103  pss 324.9MB  "order-priority"
+    dir:   /home/you/farmagram/.claude/worktrees/order-priority
+    page:  http://localhost:3021/  — "Farmagram · Orders"
+    used by: another session (a1b2c3)
+```
+
+- **No `display` argument behaves exactly as before.** A lone agent in a directory never has
+  to name an id, and later sessions in one directory still share the display that is there.
+- **An explicit `display` sticks.** Name it once and every later call in that session goes
+  to it, until a different one is named.
+- **Every response ends with the display it acted on and the page on it**, and says so
+  loudly when that display belongs to another session. Two agents sharing one display is
+  still allowed — it is a supported way to work — but it can no longer happen silently,
+  which was the failure worth killing: a screenshot of someone else's page read as your own.
+- **`new_display(url?, label?)`** creates an extra display for the same directory, with its
+  own id, and makes it that session's display. Use it when the project's display is already
+  busy, or to keep before and after open side by side.
+- **`release_display(display?)`** closes one and hands its ~0.9GB back. `list_surfaces`
+  stops showing it. Other displays are untouched, as they are by `recover_display`.
+- **The count is capped** at `CCDP_MAX_DISPLAYS` (default 6). Asking for one too many
+  returns an error naming the cap instead of starting a browser the machine can't hold.
 
 ## Reaching a backend behind a proxy or VPN
 
@@ -120,8 +171,8 @@ progress and enable it deliberately.
 
 ```
 ccdp/            the runtime package
-  paths.py         filesystem locations (XDG)
-  registry.py      surface registry (flock-guarded JSON)
+  paths.py         filesystem locations (XDG) + which workspace a session belongs to
+  registry.py      surface registry (flock-guarded JSON; atomic key + display allocation)
   surfaces.py      display lifecycle: Xvfb + browser, capture, input, reaper, PSS
   capture.py       screen grab (mss/scrot) + PIL encode/resize/diff
   inputs.py        xdotool wrappers + per-surface input lock
@@ -147,13 +198,18 @@ PYTHONPATH="$PWD" python3 -m ccdp ui --no-open
 ## Status
 
 Implemented and smoke-tested: display lifecycle, capture, input, the MCP server and its
-tools, the dashboard (state/stream/apply), the bug tool, and the `.deb`. Known **pending**
+tools, addressable displays for parallel agents, the dashboard (state/stream/apply), the bug
+tool, and the `.deb`. Known **pending**
 work (by design — to be driven by real use and bug reports): sandbox hardening, the
 multi-model "operator" loop, richer human take-over in-browser, and cross-platform
 (this targets Linux first).
 
 ## Data locations
 - State/registry/logs/reports/profiles: `~/.local/state/ccdp/`
+- Environment: `CCDP_MAX_DISPLAYS` (concurrent display cap, default 6),
+  `CCDP_DISPLAY_DIR` (override which directory a session's displays are keyed by),
+  `CCDP_PROXY` / `CCDP_BROWSER_FLAGS` (browser flags, read when a display is created),
+  `CCDP_WIDTH` / `CCDP_HEIGHT`, `CCDP_IDLE_REAP_S`, `CCDP_SANDBOX`.
 - Bug reports: `~/.local/state/ccdp/bugs/*.json`
 - Feedback: `~/.local/state/ccdp/feedback/*.json`
 - Both, readably: `ccdp reports [all|bug|feedback]`.

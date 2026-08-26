@@ -1,7 +1,14 @@
-"""Surface lifecycle: one sandboxed virtual display + browser per project
-directory, shared by every session in that directory, created lazily and torn
-down when idle. Processes are started detached so they outlive the ephemeral
-MCP server that spawned them; the registry file is the shared source of truth.
+"""Surface lifecycle: sandboxed virtual displays, each a private X server with a
+browser on it, created lazily and torn down when idle. Processes are started
+detached so they outlive the ephemeral MCP server that spawned them; the registry
+file is the shared source of truth.
+
+A workspace (a project directory, or one git worktree of it — see
+`paths.workspace_dir`) gets one display by default, shared by every session
+working there. Parallel agents that need a display each ask for an extra one with
+`create()`; every surface has a stable id, and `resolve()` turns whatever a caller
+knows about a display — its id, its `:NN`, its label, its directory — into that
+id. `MAX_DISPLAYS` bounds the total, because each one is roughly 0.9GB of browser.
 """
 import hashlib
 import os
@@ -19,6 +26,15 @@ NOVNC_DIR = os.environ.get("CCDP_NOVNC_DIR", "/usr/share/novnc")
 WIDTH = int(os.environ.get("CCDP_WIDTH", "1280"))
 HEIGHT = int(os.environ.get("CCDP_HEIGHT", "800"))
 IDLE_REAP_S = int(os.environ.get("CCDP_IDLE_REAP_S", str(30 * 60)))
+
+# Each display is an Xvfb plus a full browser — measured at ~0.9GB resident. Four
+# lanes is already ~3.5GB, so the count is capped rather than left to grow until
+# the machine swaps. Raise it deliberately, per machine.
+MAX_DISPLAYS = max(1, int(os.environ.get("CCDP_MAX_DISPLAYS", "6")))
+
+# How long a half-created surface keeps its reserved key and display number before
+# housekeeping is allowed to treat it as dead.
+PROVISION_GRACE_S = 120
 
 # Everything here is perceived by screenshotting the whole framebuffer, so the
 # compositor's "only repaint what changed" optimisations are all downside: when
@@ -84,6 +100,11 @@ class SurfaceError(RuntimeError):
     pass
 
 
+class CapReached(SurfaceError):
+    """MAX_DISPLAYS is already in use. Not a malfunction — the caller should
+    release a display or raise the cap."""
+
+
 def find_browser():
     for b in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
         p = shutil.which(b)
@@ -92,8 +113,9 @@ def find_browser():
     return None
 
 
-def _free_display():
-    used = registry.used_displays()
+def _pick_display(used):
+    """First X display number not in `used` and not locked by a live X server.
+    Called by registry.reserve() inside the registry lock."""
     for n in range(101, 200):
         disp = f":{n}"
         if disp in used:
@@ -124,6 +146,17 @@ def _spawn(cmd, env, logname):
 
 def _alive(rec):
     return bool(rec) and util.pid_alive(rec.get("xvfb_pid")) and util.pid_alive(rec.get("chrome_pid"))
+
+
+def _live(rec):
+    """Alive, or still being created. This is what counts against MAX_DISPLAYS —
+    a surface whose Xvfb is two seconds from existing still owns its slot."""
+    if not rec:
+        return False
+    started = rec.get("provisioning")
+    if started and time.time() - started < PROVISION_GRACE_S:
+        return True
+    return _alive(rec)
 
 
 def _port_listening(port, host="127.0.0.1"):
@@ -168,48 +201,229 @@ def _launch_browser(browser, profile, project_dir, display, url, flags=None):
     return _spawn(cmd, util.x_env(display), f"chrome{display[1:]}.log")
 
 
-def ensure(project_dir, *, url=None):
-    """Return a live surface record for project_dir, creating it if needed."""
-    key = paths.project_key(project_dir)
-    rec = registry.get(key)
-    if _alive(rec):
-        registry.touch(key)
-        if url:
-            open_url(key, url)
-        return rec
-    if rec:
-        # Half-dead surface (e.g. the browser crashed but Xvfb is still up): tear
-        # the remains down, or they leak an X server and a display number for the
-        # rest of the login session.
-        util.log(f"surface {key} on {rec.get('display')} was half-dead — cleaning up before recreating",
-                 component="surfaces")
-        close(key)
+def create(workspace_dir, *, url=None, label=None, session=None):
+    """Create an *additional* display for a workspace and return its record.
 
+    Always a new surface with its own id, even when the workspace already has
+    one: two agents in one directory may be driving two different servers, and a
+    single agent may want a second browser to compare before against after.
+    Raises SurfaceError naming the cap when MAX_DISPLAYS is already reached.
+    """
     browser = find_browser()
     if not browser:
         raise SurfaceError("no Chrome/Chromium found — install google-chrome-stable or chromium")
 
-    display = _free_display()
-    disp_n = display[1:]
-    xvfb_pid = _spawn(["Xvfb", display, "-screen", "0", f"{WIDTH}x{HEIGHT}x24", "-nolisten", "tcp"],
-                      dict(os.environ), f"xvfb{disp_n}.log")
-    if not _wait_display(display):
-        util.terminate(xvfb_pid)
-        raise SurfaceError(f"Xvfb {display} did not come up")
-
-    profile = paths.profile_dir(key)
+    real = os.path.realpath(workspace_dir)
     flags = extra_browser_flags()
-    chrome_pid = _launch_browser(browser, profile, project_dir, display, url, flags)
+    try:
+        rec = registry.reserve(
+            paths.project_key(real),
+            dict(project_dir=real, label=(label or None), browser=browser,
+                 browser_flags=flags, width=WIDTH, height=HEIGHT, session=session,
+                 claimed_at=time.time() if session else None, last_url=url,
+                 xvfb_pid=None, chrome_pid=None, vnc_port=None,
+                 input_seq=0, frame_seq=0, frame_hash=None),
+            choose_display=_pick_display, cap=MAX_DISPLAYS, is_live=_live)
+    except registry.Full as e:
+        raise CapReached(str(e))
 
-    rec = registry.upsert(key, dict(
-        key=key, project_dir=os.path.realpath(project_dir), display=display,
-        xvfb_pid=xvfb_pid, chrome_pid=chrome_pid, vnc_port=None, browser=browser,
-        browser_flags=flags,
-        width=WIDTH, height=HEIGHT, created=time.time(), last_active=time.time(),
-        last_url=url, input_seq=0, frame_seq=0, frame_hash=None))
-    util.log(f"created surface {key} on {display} for {project_dir}", component="surfaces")
+    key, display = rec["key"], rec["display"]
+    xvfb_pid = None
+    try:
+        xvfb_pid = _spawn(["Xvfb", display, "-screen", "0", f"{WIDTH}x{HEIGHT}x24",
+                           "-nolisten", "tcp"], dict(os.environ), f"xvfb{display[1:]}.log")
+        if not _wait_display(display):
+            raise SurfaceError(f"Xvfb {display} did not come up")
+        chrome_pid = _launch_browser(browser, paths.profile_dir(key), real, display, url, flags)
+    except Exception:
+        # Give the key and the display number straight back, or a failed create
+        # leaks a slot against the cap for the rest of the login session.
+        util.terminate(xvfb_pid)
+        registry.remove(key)
+        raise
+
+    rec = registry.upsert(key, dict(xvfb_pid=xvfb_pid, chrome_pid=chrome_pid,
+                                    created=time.time(), last_active=time.time()),
+                          drop=("provisioning",))
+    util.log(f"created surface {key} on {display} for {real}"
+             + (f" (label {label!r})" if label else ""), component="surfaces")
     time.sleep(2.0)  # let the browser paint
     return rec
+
+
+def default_key(workspace_dir, session=None):
+    """The display a selectorless call in this workspace should use.
+
+    Order: a live display this session has already claimed, then the workspace's
+    primary display, then any other live display in the same workspace, then the
+    primary key so it gets created. The middle two keep today's behaviour intact —
+    later sessions in a directory attach to the display that is already there
+    rather than starting a second browser.
+    """
+    base = paths.project_key(workspace_dir)
+    here = [r for r in registry.for_dir(workspace_dir) if _alive(r)]
+    if session:
+        mine = [r for r in here if r.get("session") == session]
+        if mine:
+            return max(mine, key=lambda r: r.get("claimed_at") or r.get("created") or 0)["key"]
+    if any(r["key"] == base for r in here):
+        return base
+    return here[0]["key"] if here else base
+
+
+def ensure(workspace_dir, *, key=None, url=None, session=None, label=None):
+    """Return a live surface record, creating the display if needed.
+
+    With no `key` this is the workspace's default display — the original
+    behaviour, and what a lone agent gets without ever naming an id. With a `key`
+    it attaches to that specific display, recreating it if it has died (the new
+    surface gets a new id, which every tool response reports back).
+    """
+    explicit = key is not None
+    if key is None:
+        key = default_key(workspace_dir, session)
+    rec = registry.get(key)
+    if _alive(rec):
+        registry.touch(key)
+        if session and not rec.get("session"):
+            rec = claim(key, session)
+        if url:
+            open_url(key, url)
+        return registry.get(key)
+    if rec:
+        # Half-dead surface (e.g. the browser crashed but Xvfb is still up): tear
+        # the remains down, or they leak an X server and a display number for the
+        # rest of the login session. The replacement inherits the dead surface's
+        # workspace and label, which matters when the caller addressed a display
+        # belonging to a directory other than its own.
+        util.log(f"surface {key} on {rec.get('display')} was half-dead — cleaning up before recreating",
+                 component="surfaces")
+        workspace_dir = rec.get("project_dir") or workspace_dir
+        label = label or rec.get("label")
+        url = url or rec.get("last_url")
+        close(key)
+    elif explicit:
+        util.log(f"surface {key} is gone — creating a replacement", component="surfaces")
+    return create(workspace_dir, url=url, label=label, session=session)
+
+
+def claim(key, session):
+    """Mark a display as the one `session` is using. Advisory, not a lock: two
+    sessions in one directory sharing one display is a supported way to work. The
+    claim is what makes `list_surfaces` and the attribution on each response able
+    to say whose display this is."""
+    return registry.upsert(key, dict(session=session, claimed_at=time.time()))
+
+
+def release(key):
+    """Hand a display's memory back. Same teardown as close(); a separate name
+    because callers releasing a finished lane mean something different from
+    housekeeping reaping an idle one."""
+    rec = registry.get(key)
+    close(key)
+    return rec
+
+
+class NoSuchSurface(SurfaceError):
+    pass
+
+
+def resolve(selector, workspace_dir=None, session=None):
+    """Turn whatever a caller knows about a display into its registry key.
+
+    Accepts the id `list_surfaces` prints (or an unambiguous prefix of it), an X
+    display (`:101` or `101`), a label, or a directory path. Returns the
+    workspace's default key when `selector` is empty. Raises NoSuchSurface with
+    the available ids listed when nothing matches.
+    """
+    sel = (str(selector).strip() if selector is not None else "")
+    if not sel:
+        if not workspace_dir:
+            raise NoSuchSurface("no display given and no workspace to fall back to — "
+                                "name one of the ids from `ccdp surfaces`")
+        return default_key(workspace_dir, session)
+
+    data = registry.all_surfaces()
+    live = {k: r for k, r in data.items() if _alive(r)}
+    pool = live or data
+
+    if sel in pool:
+        return sel
+    norm = sel if sel.startswith(":") else f":{sel}"
+    by_display = [k for k, r in pool.items() if r.get("display") == norm]
+    if len(by_display) == 1:
+        return by_display[0]
+    low = sel.lower()
+    by_label = [k for k, r in pool.items() if (r.get("label") or "").lower() == low]
+    if len(by_label) == 1:
+        return by_label[0]
+    if len(sel) >= 4:
+        by_prefix = [k for k in pool if k.startswith(sel)]
+        if len(by_prefix) == 1:
+            return by_prefix[0]
+    if os.path.isdir(os.path.expanduser(sel)):
+        target = os.path.realpath(os.path.expanduser(sel))
+        if any(_alive(r) for r in registry.for_dir(target)):
+            return default_key(target, session)
+
+    known = ", ".join(f"{k} ({r.get('display')})" for k, r in pool.items()) or "none"
+    raise NoSuchSurface(
+        f"no display matches {sel!r}. Active displays: {known}. Call list_surfaces to see "
+        "them in full, or omit the display argument to use this session's own.")
+
+
+def page_title(rec):
+    """What the browser on this display is showing, from the X window name — the
+    cheap way to confirm a display is the one you think it is."""
+    try:
+        names = [w.get("name") for w in inputs.windows(rec["display"], limit=6) if w.get("name")]
+    except Exception:
+        return None
+    if not names:
+        return None
+    name = max(names, key=len)
+    for suffix in (" - Google Chrome", " - Chromium", " - Chromium Browser"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return name.strip() or None
+
+
+def describe(rec, *, active=False, session=None, title=True):
+    """The multi-line entry `list_surfaces` and `ccdp surfaces` print for one
+    display: enough for an agent to route by, and to spot a display that is not
+    its own before it drives it.
+
+    `active` marks where the calling session's tool calls go; `session` is who is
+    asking. They are deliberately separate — a session can address a display
+    another session created, and the point of this listing is to say so.
+    """
+    lines = [f"{'*' if active else ' '} {rec['key']}  {rec.get('display')}  "
+             f"pss {pss_mb(rec)}MB" + (f'  "{rec["label"]}"' if rec.get("label") else "")]
+    lines.append(f"    dir:   {rec.get('project_dir')}")
+    page = rec.get("last_url") or "about:blank"
+    if title:
+        t = page_title(rec)
+        if t:
+            page += f'  — "{t}"'
+    lines.append(f"    page:  {page}")
+    owner = rec.get("session")
+    if not owner:
+        lines.append("    used by: nobody has claimed it")
+    elif session and owner == session:
+        lines.append("    used by: this session")
+    else:
+        lines.append(f"    used by: another session ({owner})")
+        if active:
+            lines.append("    ⚠ your calls go here, but another session created this display — "
+                         "give yourself one with new_display if you are both driving it")
+    if rec.get("browser_flags"):
+        lines.append("    flags: " + " ".join(rec["browser_flags"]))
+    if rec.get("buttons_down"):
+        lines.append("    ⚠ mouse button(s) still held down: "
+                     + ", ".join(str(b) for b in rec["buttons_down"])
+                     + " — call recover_display on it")
+    return "\n".join(lines)
 
 
 def _require(key):
@@ -493,6 +707,8 @@ def close(key, *, purge_profile=False):
 def reap_idle(max_idle_s=IDLE_REAP_S):
     now = time.time()
     for key, rec in list(registry.all_surfaces().items()):
+        if rec.get("provisioning") and now - rec["provisioning"] < PROVISION_GRACE_S:
+            continue  # still being created — its processes don't exist yet
         if not _alive(rec):
             registry.remove(key)
             continue

@@ -29,7 +29,24 @@ The README above describes the program. Notes specific to editing it:
   held buttons live in the registry (`buttons_down`) so `recover()` can release them.
 - **Per-session MCP reality:** Claude Code spawns one MCP server per session, so shared
   state lives in the flock-guarded registry (`registry.py`) and surface processes are
-  detached (`start_new_session=True`). Never assume a long-lived daemon.
+  detached (`start_new_session=True`). Never assume a long-lived daemon. The one piece of
+  genuinely per-session state is `mcp_server.ACTIVE_KEY` — which display this session's
+  selectorless calls go to — and it lives in the process because the process *is* the
+  session.
+- **Workspace keying:** `paths.workspace_dir()` decides which display a session belongs to.
+  It resolves the **git worktree root** of the cwd (`rev-parse --show-toplevel`), so parallel
+  agent lanes key apart even when they are nested inside the main checkout and share one
+  `CLAUDE_PROJECT_DIR`. Never key on `--git-common-dir` or on walking up to `.git`: both
+  collapse every worktree of a repo onto one display, which is the bug this fixed.
+- **Surface keys:** a workspace's first display is `project_key(dir)`; extras are
+  `<key>-2`, `<key>-3`. `registry.reserve()` hands out the key, the X display number and the
+  cap check in **one** locked operation — allocating them separately let two lanes creating
+  a display at the same instant both pick `:101`.
+- **Addressing and attribution:** every acting tool takes an optional `display`
+  (id, prefix, `:NN`, label or path — `surfaces.resolve()`), and an explicit one sticks for
+  the session. Every response carries `_tag()`, naming the display and its page, and shouting
+  when the display belongs to another session. Keep that: a wrong screenshot that looks right
+  is worse than a failure, and attribution is what makes it visible.
 - **Adding an MCP tool:** add its schema to `TOOLS` and a branch in `call_tool()` in
   `ccdp/mcp_server.py`. Keep stdout for JSON-RPC only — log via `util.log` (stderr + file).
 - **Sandbox** (`sandbox.py`) is opt-in (`CCDP_SANDBOX=1`) and not yet hardened; leave it

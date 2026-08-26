@@ -24,10 +24,13 @@ def _state():
     surf = []
     for r in registry.all_surfaces().values():
         surf.append(dict(key=r["key"], project_dir=r.get("project_dir"), display=r.get("display"),
+                         label=r.get("label"), url=r.get("last_url"), session=r.get("session"),
                          width=r.get("width", 1280), height=r.get("height", 800),
                          pss_mb=surfaces.pss_mb(r) if surfaces._alive(r) else 0,
                          vnc_port=r.get("vnc_port"), alive=surfaces._alive(r)))
+    surf.sort(key=lambda s: (s["project_dir"] or "", s["key"]))
     return dict(program="Claude Code Display Plugin", version=__version__,
+                max_displays=surfaces.MAX_DISPLAYS,
                 claude=dict(installed=claudecli.installed(), version=claudecli.version()),
                 sandbox=sandbox.enabled(),
                 plugin=applyplugin.status(),
@@ -123,6 +126,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200 if ok else 404, {"ok": ok})
             if len(parts) == 4 and parts[0] == "api" and parts[1] == "surface":
                 key, action = parts[2], parts[3]
+                key = surfaces.resolve(key)
                 if action == "close":
                     surfaces.close(key)
                     return self._send(200, {"ok": True})
