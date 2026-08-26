@@ -100,9 +100,14 @@ class SurfaceError(RuntimeError):
     pass
 
 
-class CapReached(SurfaceError):
-    """MAX_DISPLAYS is already in use. Not a malfunction — the caller should
-    release a display or raise the cap."""
+class PreconditionError(SurfaceError):
+    """The caller asked for something that isn't there, or asked out of order.
+    An answer, not a malfunction — reported without inviting a bug report."""
+
+
+class CapReached(PreconditionError):
+    """MAX_DISPLAYS is already in use. The caller should release a display or
+    raise the cap."""
 
 
 def find_browser():
@@ -324,7 +329,7 @@ def release(key):
     return rec
 
 
-class NoSuchSurface(SurfaceError):
+class NoSuchSurface(PreconditionError):
     pass
 
 
@@ -554,18 +559,166 @@ def press_key(key, keys):
     _bump_input(key, rec)
 
 
+def attach_file(key, path):
+    """Pick a local file in the native file chooser that is open on the display.
+
+    An `<input type="file">` opens an OS file dialog, not part of the page. Doing
+    it by hand means driving a GTK chooser through a screenshot, and there are two
+    traps in the way. Without a window manager the dialog opens at whatever size
+    GTK asks for, which here is taller than the framebuffer, so its Cancel/Open
+    row falls off the bottom of every screenshot. And Return in the location entry
+    does not confirm — GTK will not activate the default button for a window that
+    no window manager ever marked active — so the gesture has to end in a click.
+
+    So: fit the dialog to the display, type the path into the location bar
+    (ctrl+L), try Return, and click the confirm button if the dialog is still up.
+    All of it is ordinary pointer and keyboard input, the same channel as
+    everything else here.
+    """
+    rec = _require(key)
+    display = rec["display"]
+    real = os.path.abspath(os.path.expanduser(str(path).strip()))
+    if not os.path.exists(real):
+        raise PreconditionError(
+            f"no such file: {real} — attach_file needs a path on this machine, and the browser "
+            "reads the file itself, so it must exist")
+    if os.path.isdir(real):
+        raise PreconditionError(f"{real} is a directory, not a file")
+
+    steps = []
+    with inputs.input_lock(key):
+        dlg = wait_dialog(rec)
+        if not dlg:
+            raise PreconditionError(
+                "no native file dialog opened on this display within 6s. Click the page's file "
+                "input or 'Choose file' button first, then call attach_file — screenshot to "
+                "check the click landed on the control.")
+
+        # Fit it: GTK sized it for a screen it cannot see, and with no window
+        # manager nothing else will ever resize it.
+        w = min(int(dlg.get("width") or 0), int(rec.get("width", WIDTH)) - 40)
+        h = min(int(dlg.get("height") or 0), int(rec.get("height", HEIGHT)) - 40)
+        if (w, h) != (dlg.get("width"), dlg.get("height")):
+            inputs.resize_window(display, dlg["id"], w, h)
+            inputs.move_window(display, dlg["id"], 0, 0)
+            time.sleep(0.5)
+            steps.append(f"resized the dialog from {dlg.get('width')}x{dlg.get('height')} "
+                         f"to {w}x{h} so its buttons are on screen")
+            dlg = next((x for x in inputs.windows(display) if x["id"] == dlg["id"]), dlg)
+
+        inputs.focus_window(display, dlg["id"])
+        inputs.key(display, "ctrl+l")
+        time.sleep(0.4)
+        inputs.type_text(display, real)
+        time.sleep(0.7)
+        steps.append(f"typed {real} into the dialog's location bar")
+        inputs.key(display, "Return")
+        time.sleep(1.2)
+
+        confirmed = native_dialog(rec) is None
+        if confirmed:
+            steps.append("Return confirmed the dialog")
+        else:
+            # The confirm button sits in the bottom-right of the action row; anchor
+            # to the dialog's own corner rather than to fixed screen coordinates.
+            bx = int(dlg.get("x") or 0) + int(dlg.get("width") or 0) - 30
+            by = int(dlg.get("y") or 0) + int(dlg.get("height") or 0) - 23
+            inputs.click(display, bx, by)
+            time.sleep(1.4)
+            confirmed = native_dialog(rec) is None
+            steps.append(f"clicked the dialog's confirm button at ({bx},{by})"
+                         + ("" if confirmed else " — the dialog is still open"))
+    _bump_input(key, rec)
+    util.log(f"attach_file on {key}: {real} — {'ok' if confirmed else 'dialog still open'}",
+             component="surfaces")
+    return dict(key=key, display=display, path=real, steps=steps, confirmed=confirmed)
+
+
 # ---- recovery ----
-def _main_window(display, chrome_pid, wins):
-    """The browser's main window: the biggest visible one belonging to the browser
-    process tree (a stray popup or menu window is smaller and usually on top).
-    The display also carries unnamed, unowned X windows the size of the screen —
-    never focus one of those, or input goes nowhere."""
+BROWSER_TITLE_SUFFIXES = (" - Google Chrome", " - Chromium", " - Chromium Browser")
+
+# Below this a window is a tooltip, a menu or one of Chrome's 1x1 helper windows,
+# not a dialog worth telling the caller about.
+DIALOG_MIN_W, DIALOG_MIN_H = 300, 200
+
+
+def _is_browser_title(w):
+    return (w.get("name") or "").endswith(BROWSER_TITLE_SUFFIXES)
+
+
+def _owned_windows(chrome_pid, wins):
     pids = set(descendants(chrome_pid)) if chrome_pid else set()
+    return [w for w in wins if w.get("pid") in pids]
+
+
+def _main_window(display, chrome_pid, wins):
+    """The browser's main window: the one belonging to the browser process tree
+    whose title reads like a browser window, biggest first. The display also
+    carries unnamed, unowned X windows the size of the screen — never focus one of
+    those, or input goes nowhere. Title before size: a native file chooser is also
+    owned by the browser and can be *larger* than the browser window, so picking
+    by area alone hands focus to the dialog."""
     def area(w):
         return (w.get("width") or 0) * (w.get("height") or 0)
-    owned = [w for w in wins if w.get("pid") in pids]
-    candidates = owned or [w for w in wins if w.get("name")] or wins
+    owned = _owned_windows(chrome_pid, wins)
+    candidates = ([w for w in owned if _is_browser_title(w)] or owned
+                  or [w for w in wins if w.get("name")] or wins)
     return max(candidates, key=area) if candidates else None
+
+
+def native_dialog(rec, wins=None):
+    """The native (GTK) dialog open on this display, or None.
+
+    A file chooser is not part of the page: it is an OS window the browser opened,
+    so it does not respond to anything the page does and screenshots of it are of
+    the toolkit, not the site. Identified without relying on its title, which is
+    localised: a browser-owned top-level, big enough to be a dialog, that is not
+    the browser's own window."""
+    if wins is None:
+        try:
+            wins = inputs.windows(rec["display"])
+        except Exception:
+            return None
+    owned = _owned_windows(rec.get("chrome_pid"), wins)
+    dialogs = [w for w in owned
+               if not _is_browser_title(w)
+               and (w.get("width") or 0) >= DIALOG_MIN_W
+               and (w.get("height") or 0) >= DIALOG_MIN_H]
+    if not dialogs:
+        return None
+    return max(dialogs, key=lambda w: (w.get("width") or 0) * (w.get("height") or 0))
+
+
+def wait_dialog(rec, timeout=6.0):
+    """Wait for a native dialog to appear. The browser takes about a second to put
+    the chooser up, and the agent that clicked has no way to know when — polling
+    here beats failing on a race it cannot control."""
+    t0 = time.time()
+    while True:
+        dlg = native_dialog(rec)
+        if dlg or time.time() - t0 >= timeout:
+            return dlg
+        time.sleep(0.3)
+
+
+def pending_dialog(rec):
+    """Name of the native dialog on this display, cheaply, or None.
+
+    Gated on a window-id count first. Listing ids is one xdotool call (~5ms);
+    inspecting every window costs ~30ms, which on a ~80ms capture would be a 40%
+    tax on every screenshot. A clean display carries exactly two top-levels — the
+    root-sized unnamed one Xvfb leaves and the browser's — so anything more is
+    worth the full look."""
+    try:
+        ids = inputs.window_ids(rec["display"])
+    except Exception:
+        return None
+    if len(ids) <= 2:
+        return None
+    dlg = native_dialog(rec)
+    if not dlg:
+        return None
+    return dlg.get("name") or "file chooser"
 
 
 def recover(key, *, restart_browser=False):
@@ -615,9 +768,14 @@ def recover(key, *, restart_browser=False):
         if main:
             extra = [w for w in wins if w["id"] != main["id"]]
             if extra:
+                # A window can vanish between the listing and its geometry read, which
+                # left this line reading "(unnamed) NonexNone" — say "gone" instead.
+                def _desc(w):
+                    wd, ht = w.get("width"), w.get("height")
+                    size = f"{wd}x{ht}" if wd and ht else "gone"
+                    return f"{w['name'] or '(unnamed)'} {size}"
                 steps.append("other windows are on this display: "
-                             + "; ".join(f"{w['name'] or '(unnamed)'} "
-                                         f"{w.get('width')}x{w.get('height')}" for w in extra))
+                             + "; ".join(_desc(w) for w in extra))
             if focused != main["id"]:
                 steps.append(f"focus was on window {focused or 'nothing'} — moved it to the browser")
             inputs.focus_window(display, main["id"])

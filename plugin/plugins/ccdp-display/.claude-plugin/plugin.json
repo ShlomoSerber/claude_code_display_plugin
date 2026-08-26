@@ -1,6 +1,6 @@
 {
   "name": "ccdp-display",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A sandboxed virtual display, per project directory, that this session can see (screenshots) and drive with human-like mouse and keyboard input. Includes tools to recover a stuck display and to record bugs and feedback against the program.",
   "author": { "name": "Claude Code Display Plugin" },
   "keywords": ["display", "browser", "gui", "computer-use", "vnc"]

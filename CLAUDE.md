@@ -22,6 +22,17 @@ The README above describes the program. Notes specific to editing it:
   `WAYLAND_DISPLAY` unset / `XDG_SESSION_TYPE=x11` and Chrome with `--ozone-platform=x11`,
   or you get black captures and x11vnc refuses to start. Centralised in `util.x_env()` and
   `surfaces.CHROME_FLAGS`; change them there, not per-call.
+- **`x_env()` cuts three inherited channels out of the sandbox** — Wayland, audio and the
+  **D-Bus session bus** — and all three were bugs before they were policy. The bus is the
+  subtlest: with it, Chrome routes the file chooser to `xdg-desktop-portal` in the *human's*
+  session, so no dialog ever reaches the virtual display and uploads are impossible. Don't
+  put it back. Note the fix only applies to browsers launched afterwards; an already-running
+  display keeps its old environment until `recover_display(restart_browser=true)`.
+- **No window manager has consequences beyond focus.** A dialog opens at whatever size GTK
+  asks for (~1231x902 here, taller than the framebuffer) and nothing will ever resize it, and
+  GTK will not activate a default button for a window no WM marked active — so Return in a
+  file chooser does nothing and the gesture has to end in a click. `surfaces.attach_file()`
+  handles both; if you touch it, re-test against a real chooser rather than reasoning about it.
 - **Browser flags:** the base set lives in `surfaces.CHROME_FLAGS`; per-display extras come
   from the environment via `surfaces.extra_browser_flags()` (`CCDP_PROXY`,
   `CCDP_BROWSER_FLAGS`) and are stored on the surface record so a relaunch keeps them.

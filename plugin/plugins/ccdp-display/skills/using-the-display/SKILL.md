@@ -31,7 +31,8 @@ step:
    `scroll(x, y, amount)` (negative = up), `type_text("...")` into the focused field,
    `press_key("Return" | "Escape" | "ctrl+a" | "ctrl+l" | ...)`.
    To press and hold — drag-and-drop, moving or resizing a window by its title bar or edge,
-   dragging a slider or a selection — use `drag(x1, y1, x2, y2)`; see below.
+   dragging a slider or a selection — use `drag(x1, y1, x2, y2)`; see below. To put a file
+   into a file input, use `attach_file(path)`; see below.
 4. **Verify:** call `screenshot()` again to confirm the result before the next action. Don't
    fire several blind actions in a row — read the screen between them.
 
@@ -51,6 +52,23 @@ step:
 **Always release what you press.** A button left down captures the pointer and makes
 everything afterwards behave strangely. If you lose track, `recover_display()` releases it,
 and `list_surfaces()` shows a warning while a button is still held.
+
+## Uploading a file
+
+Clicking an `<input type="file">` or an "Upload" button opens the **operating system's file
+chooser**, not part of the page. Don't try to click through it from a screenshot — it is a
+GTK window that behaves nothing like the page, and pressing Return in it does not confirm.
+
+```
+click(128, 227)                            # the page's "Choose File" control
+attach_file("/home/you/data/import.csv")   # absolute path, on this machine
+screenshot()                               # confirm the page took the file
+```
+
+`attach_file` waits for the chooser, fits it to the display, types the path and confirms it.
+The file must exist on this machine — the browser reads it directly. `press_key("Escape")`
+cancels the dialog, and a screenshot tells you when one is open. If `attach_file` reports the
+dialog is still open, screenshot and click its **Open** button.
 
 ## Working alongside other agents
 

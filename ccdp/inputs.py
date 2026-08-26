@@ -186,6 +186,10 @@ def resize_window(display, wid, width, height):
     _xdo(display, ["windowsize", str(wid), str(int(width)), str(int(height))])
 
 
+def move_window(display, wid, x, y):
+    _xdo(display, ["windowmove", str(wid), str(int(x)), str(int(y))])
+
+
 def repaint_window(display, wid, width, height, *, settle=0.35):
     """Force a full re-raster by nudging the window's size and putting it back.
 

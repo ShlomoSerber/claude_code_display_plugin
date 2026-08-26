@@ -18,8 +18,9 @@ display live and take control over VNC.
 - A **display** (virtual X server via Xvfb) with a browser on it, created on demand.
 - **Tools in every Claude Code session** to use it (pure-vision):
   `open_url`, `screenshot`, `click`, `move`, `drag`, `mouse_down`, `mouse_up`,
-  `scroll`, `type_text`, `press_key`, `recover_display`, `list_surfaces`,
-  `new_display`, `release_display`, `record_bug`, and `record_feedback`.
+  `scroll`, `type_text`, `press_key`, `attach_file`, `recover_display`,
+  `list_surfaces`, `new_display`, `release_display`, `record_bug`, and
+  `record_feedback`.
   Every one of the acting tools takes an optional `display`, and every response says
   which display it acted on.
 - A **dashboard** (`ccdp ui`) that shows every live display as a stream, with per-display
@@ -37,8 +38,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.4.0_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.4.0_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.4.1_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.4.1_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -79,7 +80,10 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
   default 6) because each display is a whole browser.
 - **Launch recipe (important on Wayland hosts):** X apps are started with the Wayland
   environment scrubbed and `--ozone-platform=x11`, or Chrome renders to nothing and
-  captures come back black; `x11vnc` needs the same. This is handled in `util.x_env()` and
+  captures come back black; `x11vnc` needs the same. `util.x_env()` also cuts the host's
+  audio sockets and its D-Bus session bus, so the display has no sound card and no route to
+  the human's desktop services — that last one is what keeps file dialogs on the virtual
+  display instead of the portal. All of it lives in `util.x_env()` and
   `surfaces.CHROME_FLAGS`.
 - **Press-and-hold gestures are first class:** `drag(x1,y1,x2,y2)` presses, travels in
   small steps and releases — the intermediate moves are what make HTML5 drag-and-drop and
@@ -90,6 +94,35 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
   input coordinates are pixels in that image (1:1). Navigation types the URL into the
   address bar like a person. This was validated in testing: models ground clicks on these
   screenshots reliably.
+
+## File uploads
+
+Clicking an `<input type="file">` opens the operating system's file chooser, not a part of
+the page. Two things used to make that a dead end, and both are fixed:
+
+- **The dialog never appeared at all.** With the host's D-Bus session bus in its
+  environment, Chrome asked `xdg-desktop-portal` for the chooser — a service running in the
+  *human's* desktop session, so the dialog was drawn nowhere the virtual display could see
+  it. The session bus is now scrubbed alongside Wayland and audio in `util.x_env()`, and
+  Chrome draws its own GTK chooser on the display.
+- **The dialog opened bigger than the screen.** GTK asks for ~1231x902; there is no window
+  manager here to constrain it, so its Cancel/Open row fell off the bottom of every
+  screenshot.
+
+`attach_file(path)` does the whole gesture: it fits the dialog to the display, types the
+absolute path into the location bar and confirms. Click the page's file control first, then
+call it.
+
+```
+click(128, 227)                       # the page's "Choose File" button
+attach_file("/home/you/data/import.csv")
+screenshot()                          # the page has the file
+```
+
+It waits up to 6s for the chooser to appear, because the browser takes about a second to put
+it up. `press_key("Escape")` cancels the dialog, and `screenshot` says when one is open.
+Everything here is still ordinary pointer and keyboard input — there is no DOM channel that
+sets the input's files directly, by design.
 
 ## Parallel agents: more than one display
 

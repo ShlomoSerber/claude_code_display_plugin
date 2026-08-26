@@ -139,6 +139,20 @@ TOOLS = [
          inputSchema=_with_display({
              "restart_browser": {"type": "boolean", "default": False,
                                  "description": "Last resort: restart the browser on this display."}})),
+    dict(name="attach_file",
+         description="Pick a local file in the native file chooser that is open on the display — "
+                     "the OS dialog a page opens when you click an <input type=\"file\">, an "
+                     "'Upload' or a 'Choose file' control. Click that control first, then call "
+                     "this with the file's absolute path: it types the path into the dialog and "
+                     "confirms it, the way a person would. This is how upload and import flows "
+                     "are done here. The chooser is an OS window, not part of the page, so "
+                     "clicking around inside it from a screenshot is slow and it opens larger "
+                     "than the display; this handles both. press_key('Escape') cancels it.",
+         inputSchema=_with_display({
+             "path": {"type": "string",
+                      "description": "Absolute path of the file to attach, on this machine. "
+                                     "The browser reads it directly, so it must exist."}},
+             ["path"])),
     dict(name="new_display",
          description="Create an ADDITIONAL display, with its own id, and make it this session's "
                      "display from now on. Use it when you need a browser of your own: another "
@@ -284,6 +298,12 @@ STUCK_HINT = ("\n\n⚠ The display has not changed at all across the last {n} in
               "probably stuck (a stray window or menu holding focus, or a wedged browser). Call "
               "recover_display, then screenshot again, before sending more input.")
 
+DIALOG_HINT = ("\n\n📎 A native dialog is open on this display: \"{name}\". It is an OS window the "
+               "browser opened, not part of the page — the page underneath will not react to "
+               "anything until it is dealt with. If it is a file chooser, call attach_file with "
+               "the absolute path of the file you want instead of clicking through it; "
+               "press_key('Escape') cancels it.")
+
 
 def call_tool(name, args):
     global ACTIVE_KEY, _selector_used
@@ -302,6 +322,19 @@ def call_tool(name, args):
         return _text(f"Active displays ({len(live)} of a maximum {surfaces.MAX_DISPLAYS}). "
                      "'*' marks the one this session's calls go to; pass any id, ':NN' or label "
                      "as the 'display' argument to act on another.\n\n" + body)
+
+    if name == "attach_file":
+        path = _arg(args, "path", "file", "filename", "file_path", "filepath", "local_path")
+        rec = _target(args)
+        info = surfaces.attach_file(rec["key"], path)
+        head = (f"Attached {info['path']} to the file chooser." if info["confirmed"] else
+                f"Typed {info['path']} into the file chooser, but it is still open.")
+        tail = ("\n\nCall screenshot to confirm the page picked the file up."
+                if info["confirmed"] else
+                "\n\nScreenshot the display and confirm it by clicking its Open button, or "
+                "press_key('Escape') to cancel and try again.")
+        return _text(head + "\n- " + "\n- ".join(info["steps"]) + tail
+                     + _tag(registry.get(rec["key"]) or rec))
 
     if name == "new_display":
         url = _arg(args, "url", "uri", "address", default=None)
@@ -357,6 +390,9 @@ def call_tool(name, args):
         png, w, h, _, stale = surfaces.screenshot_png(key, track=True)
         text = f"Display is {w}x{h}px. Coordinates for click/move are pixels here."
         text += _tag(rec, always=True)
+        dialog = surfaces.pending_dialog(rec)
+        if dialog:
+            text += DIALOG_HINT.format(name=dialog)
         if stale >= 3:
             text += STUCK_HINT.format(n=stale)
         return {"content": [
@@ -461,9 +497,10 @@ def handle(msg):
         args = params.get("arguments") or {}
         try:
             result = call_tool(name, args)
-        except (surfaces.NoSuchSurface, surfaces.CapReached) as e:
-            # The caller asked for something that isn't there, or for one display
-            # too many. Both are answers, not malfunctions — no record_bug nudge.
+        except surfaces.PreconditionError as e:
+            # The caller asked for something that isn't there, asked out of order,
+            # or asked for one display too many. Answers, not malfunctions — so no
+            # record_bug nudge, which would fill the queue with non-bugs.
             result = _err(str(e))
         except Exception as e:
             # Log the arguments too: without them a failure like a bare KeyError
