@@ -319,7 +319,8 @@ def call_tool(name, args):
                          f"workspace ({WORKSPACE_DIR}); new_display creates an extra one.")
         body = "\n".join(surfaces.describe(r, active=(r["key"] == mine), session=SESSION_ID)
                          for r in live)
-        return _text(f"Active displays ({len(live)} of a maximum {surfaces.MAX_DISPLAYS}). "
+        return _text(f"Active displays ({len(live)} of a maximum {surfaces.MAX_DISPLAYS}, "
+                     f"{surfaces.MAX_DISPLAYS_SOURCE}). "
                      "'*' marks the one this session's calls go to; pass any id, ':NN' or label "
                      "as the 'display' argument to act on another.\n\n" + body)
 

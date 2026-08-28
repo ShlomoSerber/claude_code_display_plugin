@@ -38,8 +38,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.4.1_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.4.1_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.4.2_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.4.2_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -76,8 +76,9 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
   Because Claude Code runs a *separate* MCP server per session, shared state lives in a
   registry file and the Xvfb/browser processes are started **detached** so they outlive any
   one session. A file lock serialises input so two sessions can't fight over the pointer.
-  Idle displays are reaped after 30 minutes; the total is capped (`CCDP_MAX_DISPLAYS`,
-  default 6) because each display is a whole browser.
+  Idle displays are reaped after 30 minutes; the total is capped because each display is a
+  whole browser. The cap is sized from the machine — half of RAM divided by the ~0.9GB a
+  display costs, so 8GB gives 4 and 190GB gives 105 — and `CCDP_MAX_DISPLAYS` overrides it.
 - **Launch recipe (important on Wayland hosts):** X apps are started with the Wayland
   environment scrubbed and `--ozone-platform=x11`, or Chrome renders to nothing and
   captures come back black; `x11vnc` needs the same. `util.x_env()` also cuts the host's
@@ -142,7 +143,7 @@ takes an optional `display`, which accepts the id `list_surfaces` prints (or an 
 prefix), an X display (`:101`), a label, or a directory path:
 
 ```
-Active displays (2 of a maximum 6). '*' marks the one this session's calls go to.
+Active displays (2 of a maximum 8, auto, 16GB RAM). '*' marks the one this session's calls go to.
 
 * 59613d0db7db  :102  pss 336.4MB
     dir:   /home/you/farmagram/.claude/worktrees/board-shifts
@@ -167,8 +168,12 @@ Active displays (2 of a maximum 6). '*' marks the one this session's calls go to
   busy, or to keep before and after open side by side.
 - **`release_display(display?)`** closes one and hands its ~0.9GB back. `list_surfaces`
   stops showing it. Other displays are untouched, as they are by `recover_display`.
-- **The count is capped** at `CCDP_MAX_DISPLAYS` (default 6). Asking for one too many
-  returns an error naming the cap instead of starting a browser the machine can't hold.
+- **The count is capped by the machine's RAM.** The default cap is half of total RAM
+  divided by the ~0.9GB one display costs: 4 on an 8GB laptop, 8 on 16GB, 105 on a 190GB
+  box. There is no fixed ceiling — a big machine gets to use what it has. Asking for one
+  too many returns an error naming the cap and where it came from, instead of starting a
+  browser the machine can't hold. `CCDP_MAX_DISPLAYS` overrides the number in either
+  direction; `list_surfaces` and `ccdp surfaces` both print which of the two is in force.
 
 ## Reaching a backend behind a proxy or VPN
 
@@ -239,7 +244,8 @@ multi-model "operator" loop, richer human take-over in-browser, and cross-platfo
 
 ## Data locations
 - State/registry/logs/reports/profiles: `~/.local/state/ccdp/`
-- Environment: `CCDP_MAX_DISPLAYS` (concurrent display cap, default 6),
+- Environment: `CCDP_MAX_DISPLAYS` (concurrent display cap; the default is derived from
+  total RAM, half of it divided by ~0.9GB per display, minimum 1 and no upper bound),
   `CCDP_DISPLAY_DIR` (override which directory a session's displays are keyed by),
   `CCDP_PROXY` / `CCDP_BROWSER_FLAGS` (browser flags, read when a display is created),
   `CCDP_WIDTH` / `CCDP_HEIGHT`, `CCDP_IDLE_REAP_S`, `CCDP_SANDBOX`.

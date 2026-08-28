@@ -43,7 +43,7 @@ def _surfaces():
         return 0
     live = [r for r in data.values() if surfaces._alive(r)]
     print(f"{len(live)} of a maximum {surfaces.MAX_DISPLAYS} displays running "
-          "(cap: CCDP_MAX_DISPLAYS)\n")
+          f"({surfaces.MAX_DISPLAYS_SOURCE}; override with CCDP_MAX_DISPLAYS)\n")
     for r in data.values():
         if surfaces._alive(r):
             print(surfaces.describe(r))

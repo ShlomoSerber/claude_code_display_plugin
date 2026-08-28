@@ -31,6 +31,7 @@ def _state():
     surf.sort(key=lambda s: (s["project_dir"] or "", s["key"]))
     return dict(program="Claude Code Display Plugin", version=__version__,
                 max_displays=surfaces.MAX_DISPLAYS,
+                max_displays_source=surfaces.MAX_DISPLAYS_SOURCE,
                 claude=dict(installed=claudecli.installed(), version=claudecli.version()),
                 sandbox=sandbox.enabled(),
                 plugin=applyplugin.status(),

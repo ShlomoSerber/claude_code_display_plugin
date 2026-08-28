@@ -92,13 +92,13 @@ class Full(RuntimeError):
     """Raised by reserve() when the concurrent-display cap is already reached."""
 
 
-def reserve(base, record, *, choose_display, cap=None, is_live=None):
+def reserve(base, record, *, choose_display, cap=None, cap_note="", is_live=None):
     """Atomically claim the next free key in the `base`, `base-2`, `base-3`...
     series together with an X display number, and write a placeholder record.
 
     `choose_display(used)` returns a display number given the ones already taken.
-    `cap` bounds how many surfaces may exist at once; `is_live(rec)` decides which
-    records count towards it. Both the count and the allocation happen inside the
+    `cap` bounds how many surfaces may exist at once and `cap_note` says where that
+    number came from, for the error; `is_live(rec)` decides which records count. Both the count and the allocation happen inside the
     one lock, so concurrent creators can neither exceed the cap nor collide on a
     display number. The record is marked `provisioning` until the caller has its
     processes up.
@@ -108,10 +108,11 @@ def reserve(base, record, *, choose_display, cap=None, is_live=None):
         if cap:
             live = [r for r in data.values() if (is_live(r) if is_live else True)]
             if len(live) >= int(cap):
+                note = f" [{cap_note}]" if cap_note else ""
                 raise Full(
-                    f"display cap reached: {len(live)} of {int(cap)} displays are already "
-                    "running (each one is a browser, roughly 0.9GB). Release one you no "
-                    "longer need, or raise the cap with CCDP_MAX_DISPLAYS.")
+                    f"display cap reached: {len(live)} of {int(cap)}{note} displays are "
+                    "already running (each one is a browser, roughly 0.9GB). Release one "
+                    "you no longer need, or raise the cap with CCDP_MAX_DISPLAYS.")
         key = None
         for n in range(1, 65):
             candidate = base if n == 1 else f"{base}-{n}"

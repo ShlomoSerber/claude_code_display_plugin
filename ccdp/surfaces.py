@@ -8,7 +8,8 @@ A workspace (a project directory, or one git worktree of it — see
 working there. Parallel agents that need a display each ask for an extra one with
 `create()`; every surface has a stable id, and `resolve()` turns whatever a caller
 knows about a display — its id, its `:NN`, its label, its directory — into that
-id. `MAX_DISPLAYS` bounds the total, because each one is roughly 0.9GB of browser.
+id. `MAX_DISPLAYS` bounds the total, because each one is roughly 0.9GB of browser;
+it is sized from the machine's RAM unless `CCDP_MAX_DISPLAYS` says otherwise.
 """
 import hashlib
 import os
@@ -27,10 +28,50 @@ WIDTH = int(os.environ.get("CCDP_WIDTH", "1280"))
 HEIGHT = int(os.environ.get("CCDP_HEIGHT", "800"))
 IDLE_REAP_S = int(os.environ.get("CCDP_IDLE_REAP_S", str(30 * 60)))
 
-# Each display is an Xvfb plus a full browser — measured at ~0.9GB resident. Four
-# lanes is already ~3.5GB, so the count is capped rather than left to grow until
-# the machine swaps. Raise it deliberately, per machine.
-MAX_DISPLAYS = max(1, int(os.environ.get("CCDP_MAX_DISPLAYS", "6")))
+# Each display is an Xvfb plus a full browser — measured at ~0.9GB resident. Left
+# unbounded, an agent that keeps calling create() walks the machine into swap, and
+# the OOM killer then picks a victim that is rarely the browser. So the total is
+# capped — but the cap is derived from the machine instead of hardcoded, because a
+# fixed number is wrong at both ends: it hangs an 8GB laptop and holds back a
+# 190GB box for nothing. Half of RAM, divided by what one display costs.
+DISPLAY_COST_GB = 0.9
+MEM_BUDGET_FRACTION = 0.5
+MAX_DISPLAYS_FALLBACK = 6
+
+
+def mem_total_gb():
+    """Total system RAM in GB, or None where /proc/meminfo cannot be read."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / (1024.0 * 1024.0)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _auto_max_displays():
+    """(cap, why) from total RAM. MemTotal and not MemAvailable deliberately: the
+    cap has to be the same number in every session on a machine, and a create that
+    works in the morning and refuses in the afternoon is worse than a low cap."""
+    gb = mem_total_gb()
+    if not gb:
+        return MAX_DISPLAYS_FALLBACK, "default — system RAM unknown"
+    return max(1, int(gb * MEM_BUDGET_FRACTION / DISPLAY_COST_GB)), f"auto, {gb:.0f}GB RAM"
+
+
+def _max_displays():
+    raw = (os.environ.get("CCDP_MAX_DISPLAYS") or "").strip()
+    if raw:
+        try:
+            return max(1, int(raw)), "set by CCDP_MAX_DISPLAYS"
+        except ValueError:
+            util.log(f"CCDP_MAX_DISPLAYS={raw!r} is not a number — using the automatic cap")
+    return _auto_max_displays()
+
+
+MAX_DISPLAYS, MAX_DISPLAYS_SOURCE = _max_displays()
 
 # How long a half-created surface keeps its reserved key and display number before
 # housekeeping is allowed to treat it as dead.
@@ -228,7 +269,8 @@ def create(workspace_dir, *, url=None, label=None, session=None):
                  claimed_at=time.time() if session else None, last_url=url,
                  xvfb_pid=None, chrome_pid=None, vnc_port=None,
                  input_seq=0, frame_seq=0, frame_hash=None),
-            choose_display=_pick_display, cap=MAX_DISPLAYS, is_live=_live)
+            choose_display=_pick_display, cap=MAX_DISPLAYS, cap_note=MAX_DISPLAYS_SOURCE,
+            is_live=_live)
     except registry.Full as e:
         raise CapReached(str(e))
 
