@@ -128,7 +128,11 @@ function renderSurfaces(state) {
     // The zoom is worth showing on the face of the tile: it silently changes how
     // many CSS pixels the page is laid out at, and a display left zoomed makes
     // every later session's width measurements wrong.
-    dpy.textContent = `${s.display}  ${s.key}` + (s.zoom !== 100 ? `  zoom ${s.zoom}%` : "");
+    // Guarded on the field being present: during a package upgrade the assets on
+    // disk are new while the server process still runs the previous state API, so
+    // a missing zoom must read as "nothing to say", not as "zoom undefined%".
+    const zoom = Number(s.zoom);
+    dpy.textContent = `${s.display}  ${s.key}` + (zoom && zoom !== 100 ? `  zoom ${zoom}%` : "");
     dpy.title = s.viewport || "";
     const tag = t.querySelector(".tag");
     tag.textContent = s.label || "";
