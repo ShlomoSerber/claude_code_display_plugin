@@ -70,6 +70,35 @@ The file must exist on this machine — the browser reads it directly. `press_ke
 cancels the dialog, and a screenshot tells you when one is open. If `attach_file` reports the
 dialog is still open, screenshot and click its **Open** button.
 
+## Layout and responsive work: sizing the viewport, and the whole page at once
+
+Two numbers are easy to confuse, and the screenshot reply prints both:
+
+```
+Display is 1367x856px. Coordinates for click/move are pixels here.
+1367x856 display, page viewport 1366x768 CSS px at (0,87); a page with a vertical
+scrollbar lays out 1351 CSS px wide
+```
+
+The **display** size is what you click in. The **page viewport** is what the page is laid
+out against — smaller, because the browser's toolbar takes the top and a scrollbar takes the
+right. Media queries and any "minimum width" the app enforces use that second number, so
+that is the one to quote when reporting a layout finding.
+
+- **`set_viewport(width, height?)`** gives the page exactly that many CSS pixels —
+  `set_viewport(1280)`, `set_viewport(1366, 768)`. Use it before checking a breakpoint, so
+  you are testing a real width rather than whatever the display happens to be. It restarts
+  the browser on that display, so set the size **first**, then do the work.
+- **`screenshot(full_page=true)`** returns the whole scrollable page as one tall image
+  instead of one screenful. Use it to read or review a long screen, or to hand the user one
+  image per screen. It works by scrolling and joining the frames, so **it moves the page and
+  its coordinates do not map to the display** — take a normal `screenshot()` before you
+  click anything. A sticky header appears once, at the top.
+- **Browser zoom breaks the 1:1 relationship** between CSS pixels and screen pixels. If you
+  press `ctrl+plus`/`ctrl+minus`, the page is no longer laid out at the width you think:
+  every screenshot then warns you and `press_key("ctrl+0")` puts it back to 100%. Prefer
+  `set_viewport` over zoom — zoom makes screenshots blurry and the width meaningless.
+
 ## Working alongside other agents
 
 Most of the time there is one display and you never think about it: call the tools with no

@@ -12,6 +12,7 @@ id. `MAX_DISPLAYS` bounds the total, because each one is roughly 0.9GB of browse
 it is sized from the machine's RAM unless `CCDP_MAX_DISPLAYS` says otherwise.
 """
 import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -85,7 +86,11 @@ PROVISION_GRACE_S = 120
 # property value — deterministic by viewport width, surviving a hard reload).
 CHROME_FLAGS = [
     "--ozone-platform=x11", "--disable-gpu",
-    f"--window-size={WIDTH},{HEIGHT}", "--window-position=0,0",
+    # Pin the device scale factor so one CSS pixel is one screen pixel. Chrome
+    # otherwise derives it from the X server's DPI, which Xvfb reports as 100 and
+    # nothing here controls. `--window-size` is not in this list: it is per
+    # surface, and set_viewport changes it.
+    "--force-device-scale-factor=1", "--window-position=0,0",
     "--no-first-run", "--no-default-browser-check",
     "--disable-background-networking", "--password-store=basic",
     "--disable-features=Translate,TranslateUI",
@@ -135,6 +140,85 @@ def extra_browser_flags():
 # Chrome refuses to reuse a profile whose singleton lock looks live; after a hard
 # kill these can linger and block the relaunch in recover().
 _SINGLETON_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
+
+# Chrome's zoom ladder, in percent: ctrl+plus and ctrl+minus step along it,
+# ctrl+0 returns to 100. Tracked because zoom multiplies devicePixelRatio, and
+# that silently changes what "1280px wide" means to the page — at 110% a
+# 1280px display lays a page out at 1164 CSS px (filed bug: read as a bug in the
+# app under test, and no browser flag can undo it, because zoom is profile state).
+ZOOM_STEPS = (25, 33, 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, 400, 500)
+
+# Where Chrome persists zoom in a profile. Cleared before every launch so a
+# display always starts at 100% — otherwise one stray ctrl+plus outlives the
+# session that pressed it and every later session inherits a lying viewport.
+_ZOOM_PREFS = (("partition", "per_host_zoom_levels"),
+               ("partition", "default_zoom_level"),
+               ("profile", "default_zoom_level"),
+               ("profile", "per_host_zoom_levels"))
+
+
+def zoom_step(percent, direction):
+    """The zoom level ctrl+plus (+1) or ctrl+minus (-1) moves to from `percent`."""
+    try:
+        i = ZOOM_STEPS.index(int(percent))
+    except ValueError:
+        i = min(range(len(ZOOM_STEPS)), key=lambda j: abs(ZOOM_STEPS[j] - (percent or 100)))
+    return ZOOM_STEPS[max(0, min(len(ZOOM_STEPS) - 1, i + direction))]
+
+
+def zoom_after_keys(percent, keys):
+    """Where `keys` leaves the browser's zoom. Returns the new percentage.
+
+    Zoom is changed by ordinary keystrokes, so the only way to keep an honest
+    number is to read the keystrokes going past. xdotool spells the chords
+    'ctrl+plus', 'ctrl+equal', 'ctrl+minus' and 'ctrl+0'.
+    """
+    now = int(percent or 100)
+    for k in inputs.key_sequence(keys):
+        parts = [p.lower() for p in str(k).split("+")]
+        if "ctrl" not in parts and "control" not in parts:
+            continue
+        last = parts[-1]
+        if last in ("plus", "equal", "kp_add", "shift"):
+            now = zoom_step(now, +1)
+        elif last in ("minus", "kp_subtract", "underscore"):
+            now = zoom_step(now, -1)
+        elif last in ("0", "kp_0"):
+            now = 100
+    return now
+
+
+def _reset_zoom_prefs(profile):
+    """Drop saved zoom levels from a Chrome profile, before it is launched.
+
+    Chrome reads Preferences at start and rewrites it at exit, so this is the one
+    moment the file is ours to edit. Best-effort: a profile that has never run has
+    no Preferences yet, and a corrupt one is Chrome's problem, not a reason to
+    refuse to start a display.
+    """
+    path = os.path.join(profile, "Default", "Preferences")
+    try:
+        with open(path) as fh:
+            prefs = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    dropped = False
+    for section, name in _ZOOM_PREFS:
+        node = prefs.get(section)
+        if isinstance(node, dict) and name in node:
+            del node[name]
+            dropped = True
+    if not dropped:
+        return False
+    try:
+        tmp = path + ".ccdp-tmp"
+        with open(tmp, "w") as fh:
+            json.dump(prefs, fh)
+        os.replace(tmp, path)
+    except OSError as e:
+        util.log(f"could not reset zoom in {path}: {e}", component="surfaces")
+        return False
+    return True
 
 
 class SurfaceError(RuntimeError):
@@ -235,25 +319,74 @@ def _clear_singleton(profile):
             pass
 
 
-def _launch_browser(browser, profile, project_dir, display, url, flags=None):
+def _launch_browser(browser, profile, project_dir, display, url, flags=None,
+                    width=None, height=None):
     os.makedirs(profile, exist_ok=True)
     _clear_singleton(profile)
+    if _reset_zoom_prefs(profile):
+        util.log(f"reset saved browser zoom to 100% for {display}", component="surfaces")
     flags = list(flags if flags is not None else extra_browser_flags())
     if flags:
         util.log(f"browser on {display} gets extra flags: {' '.join(flags)}", component="surfaces")
-    cmd = [browser, *CHROME_FLAGS, *flags, f"--user-data-dir={profile}", url or "about:blank"]
+    size = [f"--window-size={int(width or WIDTH)},{int(height or HEIGHT)}"]
+    cmd = [browser, *CHROME_FLAGS, *size, *flags, f"--user-data-dir={profile}",
+           url or "about:blank"]
     cmd = sandbox.wrap(cmd, profile_dir=profile, project_dir=os.path.realpath(project_dir),
                        display=display)
     return _spawn(cmd, util.x_env(display), f"chrome{display[1:]}.log")
 
 
-def create(workspace_dir, *, url=None, label=None, session=None):
+def _launch_xvfb(display, width, height):
+    """Start the X server for a display. `-dpi 96` is deliberate: Xvfb otherwise
+    reports 100dpi, which is one more thing that could push Chrome's device scale
+    factor off 1 and break the 1 CSS pixel = 1 screen pixel contract."""
+    return _spawn(["Xvfb", display, "-screen", "0", f"{int(width)}x{int(height)}x24",
+                   "-dpi", "96", "-nolisten", "tcp"], dict(os.environ), f"xvfb{display[1:]}.log")
+
+
+def _clear_x_lock(display):
+    """Remove an X lock left behind by a hard-killed server, so the same display
+    number can be reused straight away. Only when the pid inside it is gone."""
+    path = f"/tmp/.X{display[1:]}-lock"
+    try:
+        with open(path) as fh:
+            pid = int(fh.read().strip())
+    except (OSError, ValueError):
+        return
+    if util.pid_alive(pid):
+        return
+    try:
+        os.remove(path)
+        util.log(f"removed stale X lock {path} (pid {pid} is gone)", component="surfaces")
+    except OSError:
+        pass
+
+
+MIN_SIZE, MAX_SIZE = 320, 8192
+
+
+def _clamp_size(width, height):
+    def one(v, fallback):
+        try:
+            v = int(round(float(v)))
+        except (TypeError, ValueError):
+            return fallback
+        return max(MIN_SIZE, min(MAX_SIZE, v))
+    return one(width, WIDTH), one(height, HEIGHT)
+
+
+def create(workspace_dir, *, url=None, label=None, session=None, width=None, height=None,
+           viewport=None):
     """Create an *additional* display for a workspace and return its record.
 
     Always a new surface with its own id, even when the workspace already has
     one: two agents in one directory may be driving two different servers, and a
     single agent may want a second browser to compare before against after.
     Raises SurfaceError naming the cap when MAX_DISPLAYS is already reached.
+
+    `width`/`height` size the framebuffer. `viewport=(w, h)` instead sizes it so
+    the *page* gets exactly that many CSS pixels, which is the number responsive
+    work cares about; it costs one calibration pass after the browser starts.
     """
     browser = find_browser()
     if not browser:
@@ -261,11 +394,13 @@ def create(workspace_dir, *, url=None, label=None, session=None):
 
     real = os.path.realpath(workspace_dir)
     flags = extra_browser_flags()
+    w, h = _clamp_size(width if width is not None else WIDTH,
+                       height if height is not None else HEIGHT)
     try:
         rec = registry.reserve(
             paths.project_key(real),
             dict(project_dir=real, label=(label or None), browser=browser,
-                 browser_flags=flags, width=WIDTH, height=HEIGHT, session=session,
+                 browser_flags=flags, width=w, height=h, zoom=100, session=session,
                  claimed_at=time.time() if session else None, last_url=url,
                  xvfb_pid=None, chrome_pid=None, vnc_port=None,
                  input_seq=0, frame_seq=0, frame_hash=None),
@@ -277,11 +412,14 @@ def create(workspace_dir, *, url=None, label=None, session=None):
     key, display = rec["key"], rec["display"]
     xvfb_pid = None
     try:
-        xvfb_pid = _spawn(["Xvfb", display, "-screen", "0", f"{WIDTH}x{HEIGHT}x24",
-                           "-nolisten", "tcp"], dict(os.environ), f"xvfb{display[1:]}.log")
+        xvfb_pid = _launch_xvfb(display, w, h)
         if not _wait_display(display):
             raise SurfaceError(f"Xvfb {display} did not come up")
-        chrome_pid = _launch_browser(browser, paths.profile_dir(key), real, display, url, flags)
+        # Start on the calibration page rather than on `url`: the page area has to
+        # be measured once per display, and doing it before the caller's page
+        # loads costs nothing and avoids loading that page twice.
+        chrome_pid = _launch_browser(browser, paths.profile_dir(key), real, display,
+                                     _calibration_url(), flags, width=w, height=h)
     except Exception:
         # Give the key and the display number straight back, or a failed create
         # leaks a slot against the cap for the rest of the login session.
@@ -295,7 +433,197 @@ def create(workspace_dir, *, url=None, label=None, session=None):
     util.log(f"created surface {key} on {display} for {real}"
              + (f" (label {label!r})" if label else ""), component="surfaces")
     time.sleep(2.0)  # let the browser paint
-    return rec
+    _measure_new(key, viewport)
+    open_url(key, url or "about:blank")
+    return registry.get(key) or rec
+
+
+def _measure_new(key, viewport=None):
+    """Calibrate (and optionally size) a display that has just come up.
+
+    Never fatal: a display that could not be measured is still a working display,
+    and refusing to hand it over would turn a reporting nicety into an outage.
+    """
+    try:
+        calibrate(key, restore=False)
+        if viewport:
+            set_viewport(key, viewport[0], viewport[1])
+    except Exception as e:
+        util.log(f"could not measure display {key}: {e}", component="surfaces")
+
+
+# ---- measuring the display: how much of it the page actually gets ----
+# A screenshot shows the whole framebuffer, but the page only occupies what is
+# left under the browser's toolbar, and CSS pixels are only screen pixels while
+# the zoom is 100%. Both were invisible before (filed feedback: a session spent a
+# long time reading 1280 as the page's width when the page was being laid out at
+# 1164), and neither can be asked for — there is no DOM channel here, by design.
+# So the program measures itself: a calibration page paints known colours at
+# known CSS sizes and the capture is read back.
+#
+#   magenta  the page area, the whole of it — the box the browser gives the page.
+#            Every other marker is a small patch inside it, so the magenta
+#            bounding box is still the full area.
+#   cyan     a scrolling box exactly 200 CSS px wide: the width its content is
+#            left with is 200 minus a scrollbar, which is how wide Chrome's
+#            scrollbars are on this machine
+#   yellow   a bar exactly 100 CSS px wide — its measured width is the scale, so
+#            a page at 110% zoom shows up as 110 and stops being a mystery
+CALIBRATION_HTML = """<!doctype html><meta charset="utf-8"><title>ccdp calibration</title>
+<style>
+ html,body{margin:0;padding:0;border:0;height:100%;overflow:hidden}
+ body{background:#ff00ff}
+ #sb{position:absolute;left:0;top:0;width:200px;height:120px;overflow-y:scroll;background:#0ff}
+ #sb>div{height:400px}
+ #ruler{position:absolute;left:0;bottom:0;width:100px;height:10px;background:#ff0}
+</style>
+<div id="sb"><div></div></div><div id="ruler"></div>
+"""
+
+MAGENTA, CYAN, YELLOW = (255, 0, 255), (0, 255, 255), (255, 255, 0)
+RULER_CSS_PX = 100
+SCROLLBOX_CSS_PX = 200
+
+
+def _calibration_url():
+    paths.ensure_dirs()
+    path = os.path.join(paths.STATE_DIR, "calibrate.html")
+    try:
+        with open(path) as fh:
+            current = fh.read()
+    except OSError:
+        current = None
+    if current != CALIBRATION_HTML:
+        with open(path, "w") as fh:
+            fh.write(CALIBRATION_HTML)
+    return "file://" + path
+
+
+def calibrate(key, *, restore=True):
+    """Measure the page area, the scrollbar and the CSS scale on a display.
+
+    Stores a `viewport` record and returns it. `restore` puts the page that was
+    open back afterwards; pass False when the caller is about to navigate anyway.
+    """
+    rec = _require(key)
+    display, back = rec["display"], rec.get("last_url")
+    with inputs.input_lock(key):
+        inputs.open_url(display, _calibration_url())
+    time.sleep(1.4)
+    img = capture.grab(display, rec["width"], rec["height"])
+    page = capture.solid_bbox(img, MAGENTA)
+    if not page:
+        util.log(f"calibration on {key}: the calibration page did not paint — "
+                 "leaving the viewport unmeasured", component="surfaces")
+        if restore and back:
+            open_url(key, back)
+        return None
+    x0, y0, x1, y1 = page
+    inner = capture.solid_bbox(img, CYAN)
+    ruler = capture.solid_bbox(img, YELLOW)
+    scale = round((ruler[2] - ruler[0]) / float(RULER_CSS_PX), 3) if ruler else 1.0
+    scrollbar = (int(round(SCROLLBOX_CSS_PX * scale)) - (inner[2] - inner[0])) if inner else 15
+    vp = dict(x=int(x0), y=int(y0), w=int(x1 - x0), h=int(y1 - y0),
+              scrollbar=max(0, scrollbar), scale=scale or 1.0, measured=time.time())
+    vp["css_w"] = int(round(vp["w"] / vp["scale"]))
+    vp["css_h"] = int(round(vp["h"] / vp["scale"]))
+    registry.upsert(key, dict(viewport=vp, zoom=int(round(vp["scale"] * 100))))
+    util.log(f"calibrated {key}: page area {vp['w']}x{vp['h']}px at ({vp['x']},{vp['y']}), "
+             f"scrollbar {vp['scrollbar']}px, scale {vp['scale']}", component="surfaces")
+    if restore and back:
+        open_url(key, back)
+    return vp
+
+
+def viewport_of(rec):
+    """The measured page area, or a plain guess when a display predates
+    calibration. Never None, so callers can always say something true-ish."""
+    vp = rec.get("viewport")
+    if isinstance(vp, dict) and vp.get("w"):
+        return vp
+    w, h = int(rec.get("width") or WIDTH), int(rec.get("height") or HEIGHT)
+    return dict(x=0, y=0, w=w, h=h, scrollbar=15, scale=1.0, css_w=w, css_h=h, measured=None)
+
+
+def resize(key, width, height):
+    """Relaunch a display at a new framebuffer size, keeping its id and its page.
+
+    Xvfb fixes its framebuffer at start — its RandR maximum *is* the size it was
+    given — so there is no resizing it in place; the X server and the browser both
+    come back. The page is reopened from `last_url`, but anything typed into it is
+    gone, which is why this is only reached by an explicit request.
+    """
+    rec = registry.get(key)
+    if not rec:
+        raise NoSuchSurface(f"no display {key}")
+    w, h = _clamp_size(width, height)
+    display = rec["display"]
+    had_control = bool(rec.get("ws_port"))
+    stop_vnc(key)
+    util.terminate(rec.get("chrome_pid"))
+    util.terminate(rec.get("xvfb_pid"))
+    _clear_x_lock(display)
+    time.sleep(0.4)
+    xvfb_pid = _launch_xvfb(display, w, h)
+    if not _wait_display(display):
+        util.terminate(xvfb_pid)
+        close(key)
+        raise SurfaceError(f"Xvfb {display} did not come back up at {w}x{h} — the display was "
+                           "closed; call screenshot or open_url to get a fresh one")
+    chrome_pid = _launch_browser(rec.get("browser") or find_browser(), paths.profile_dir(key),
+                                 rec.get("project_dir") or os.getcwd(), display,
+                                 rec.get("last_url") or "about:blank", rec.get("browser_flags"),
+                                 width=w, height=h)
+    registry.upsert(key, dict(xvfb_pid=xvfb_pid, chrome_pid=chrome_pid, width=w, height=h,
+                              zoom=100, frame_hash=None))
+    time.sleep(2.5)
+    if had_control:
+        try:
+            start_control(key)
+        except Exception as e:  # the display itself is fine; the panel is not essential
+            util.log(f"could not restart the control panel for {key}: {e}", component="surfaces")
+    util.log(f"resized surface {key} on {display} to {w}x{h}", component="surfaces")
+    return registry.get(key)
+
+
+def set_viewport(key, width, height=None):
+    """Give the page exactly `width` x `height` CSS pixels, and return the result.
+
+    This is the operation responsive and layout work is actually made of, and it
+    was not expressible before (filed feedback: a session verifying a 1200px
+    minimum could not render anything at a round width, and read the display's
+    own 1164px CSS viewport as a bug in the app under test).
+
+    It works by sizing the framebuffer to the requested viewport plus the
+    browser's own chrome, which is *measured* rather than assumed: relaunch,
+    calibrate, and if the measurement missed — a different Chrome, a taller
+    toolbar — correct by the difference and do it once more. Two relaunches at
+    worst, and the answer is exact rather than close.
+    """
+    rec = _require(key)
+    vp = viewport_of(rec)
+    target_w = max(MIN_SIZE, int(width))
+    target_h = max(200, int(height if height is not None else vp["css_h"]))
+
+    result = vp
+    for _ in range(2):
+        if (result["css_w"], result["css_h"]) == (target_w, target_h) and result.get("measured"):
+            break
+        inset_w = int(rec.get("width") or WIDTH) - result["w"]
+        inset_h = int(rec.get("height") or HEIGHT) - result["h"]
+        fb_w, fb_h = target_w + inset_w, target_h + inset_h
+        rec = resize(key, fb_w, fb_h)
+        measured = calibrate(key, restore=True)
+        rec = registry.get(key)
+        if not measured:
+            raise SurfaceError("resized the display but could not measure the page area — "
+                               "screenshot it and check the browser came back")
+        result = measured
+        if (result["css_w"], result["css_h"]) == (target_w, target_h):
+            break
+    return dict(key=key, display=rec["display"], target=(target_w, target_h),
+                viewport=result, framebuffer=(rec["width"], rec["height"]),
+                exact=(result["css_w"], result["css_h"]) == (target_w, target_h))
 
 
 def default_key(workspace_dir, session=None):
@@ -436,6 +764,32 @@ def page_title(rec):
     return name.strip() or None
 
 
+def viewport_line(rec):
+    """One line saying what the page on this display actually gets, in the units
+    the page is laid out in. The framebuffer size alone is not that number: the
+    toolbar takes the top of it, a scrollbar takes the right of it, and browser
+    zoom decides how many CSS pixels the rest is worth."""
+    fb = f"{rec.get('width')}x{rec.get('height')} display"
+    vp = viewport_of(rec)
+    if vp.get("measured") is None:
+        return (f"{fb}, page viewport {vp['css_w']}x{vp['css_h']} CSS px "
+                "(not measured — assuming the whole display)")
+    # Zoom, not the calibration, is what decides this right now: it was measured
+    # at 100% and every ctrl+plus since has changed the answer.
+    zoom = int(rec.get("zoom") or round(vp["scale"] * 100))
+    scale = zoom / 100.0
+    css_w, css_h = int(round(vp["w"] / scale)), int(round(vp["h"] / scale))
+    where = f"at ({vp['x']},{vp['y']})" if (vp["x"] or vp["y"]) else "at the top-left"
+    line = f"{fb}, page viewport {css_w}x{css_h} CSS px {where}"
+    if zoom != 100:
+        line += (f" — ⚠ browser zoom is {zoom}%, so 1 CSS px is {scale:g} screen px and the page "
+                 f"is NOT being laid out at {vp['css_w']}px; press_key('ctrl+0') puts it back")
+    elif vp.get("scrollbar"):
+        line += (f"; a page with a vertical scrollbar lays out {css_w - vp['scrollbar']} "
+                 "CSS px wide")
+    return line
+
+
 def describe(rec, *, active=False, session=None, title=True):
     """The multi-line entry `list_surfaces` and `ccdp surfaces` print for one
     display: enough for an agent to route by, and to spot a display that is not
@@ -448,6 +802,7 @@ def describe(rec, *, active=False, session=None, title=True):
     lines = [f"{'*' if active else ' '} {rec['key']}  {rec.get('display')}  "
              f"pss {pss_mb(rec)}MB" + (f'  "{rec["label"]}"' if rec.get("label") else "")]
     lines.append(f"    dir:   {rec.get('project_dir')}")
+    lines.append("    size:  " + viewport_line(rec))
     page = rec.get("last_url") or "about:blank"
     if title:
         t = page_title(rec)
@@ -517,6 +872,105 @@ def screenshot_png(key, *, max_width=None, track=False):
         img, stale = screenshot_image(key, track=True)
         return capture.png_bytes(img, max_width=max_width) + (stale,)
     return capture.png_bytes(screenshot_image(key), max_width=max_width)
+
+
+# A page taller than its viewport can only be captured whole by scrolling it past
+# the camera, because pixels are the only channel here — there is no CDP call to
+# render beyond the viewport, deliberately. Bounded so a page with infinite scroll
+# cannot produce an infinite image.
+FULL_PAGE_MAX_HEIGHT = 20000
+FULL_PAGE_MAX_FRAMES = 40
+# How many wheel clicks the first scroll uses. Deliberately timid: one click moves
+# the page by whatever that page calls a line, measured at anywhere from ~50px to
+# a 120px row, and a first scroll that overshoots the viewport leaves no overlap
+# to measure itself against. After one successful step the real distance is known
+# and the rest of the capture uses it.
+FIRST_SCROLL_TICKS = 2
+OVERLAP_FRACTION = 0.75
+
+
+def _page_crop(img, vp):
+    box = (vp["x"], vp["y"], min(img.width, vp["x"] + vp["w"]), min(img.height, vp["y"] + vp["h"]))
+    return img.crop(box)
+
+
+def full_page_image(key, *, max_height=FULL_PAGE_MAX_HEIGHT):
+    """Capture the whole scrollable page as one tall image, by scrolling it.
+
+    Returns (image, info). The image is the *page area* only — no browser
+    toolbar — stitched from as many viewport captures as the page needs. It is a
+    document to read, not a coordinate system: nothing below the first viewport
+    can be clicked at the y it appears at here.
+
+    How far each scroll actually moved is measured from the pixels rather than
+    assumed, so a page with its own wheel handling, a shorter-than-expected end,
+    or no scrolling at all is handled by the same code path.
+    """
+    rec = _require(key)
+    display = rec["display"]
+    vp = viewport_of(rec)
+    sb = int(vp.get("scrollbar") or 0)
+    cx, cy = vp["x"] + vp["w"] // 2, vp["y"] + vp["h"] // 2
+
+    def page():
+        # The scrollbar column is dropped: its thumb sits at a different place in
+        # every frame, so it stitches into a dashed line down the side of the
+        # image and matches nothing. The result is the page's own width.
+        img = _page_crop(capture.grab(display, rec["width"], rec["height"]), vp)
+        return img.crop((0, 0, max(1, img.width - sb), img.height)) if sb else img
+
+    with inputs.input_lock(key):
+        # Back to the top. Wheel rather than ctrl+Home: Home types into whatever
+        # field has focus, and a page can legitimately have one focused.
+        for _ in range(8):
+            before = page()
+            inputs.scroll(display, cx, cy, -30)
+            time.sleep(0.35)
+            if capture.changed_fraction(before, page()) == 0.0:
+                break
+
+        cur = page()
+        tiles, rows = [cur], capture.row_hashes(cur)
+        total, frames, ticks, shrinks = cur.height, 1, FIRST_SCROLL_TICKS, 0
+        min_overlap = max(40, vp["h"] // 8)
+        reason = "reached the bottom of the page"
+        while frames < FULL_PAGE_MAX_FRAMES and total < max_height:
+            inputs.scroll(display, cx, cy, ticks)
+            time.sleep(0.5)
+            nxt = page()
+            if capture.changed_fraction(cur, nxt) == 0.0:
+                break  # nothing moved: this is the bottom of the page
+            nxt_rows = capture.row_hashes(nxt)
+            shift = capture.find_shift(rows, nxt_rows, min_overlap=min_overlap)
+            if not shift:
+                # The page moved but the two frames share no band, so that scroll
+                # jumped more than a screen. Wind it back and try a smaller step —
+                # twice, then give up rather than grind against a page that is
+                # repainting under us.
+                if ticks > 1 and shrinks < 2:
+                    inputs.scroll(display, cx, cy, -ticks)
+                    time.sleep(0.5)
+                    cur = page()
+                    rows = capture.row_hashes(cur)
+                    ticks, shrinks = max(1, ticks // 2), shrinks + 1
+                    continue
+                reason = "could not follow the page past this point"
+                break
+            tiles.append(nxt.crop((0, nxt.height - shift, nxt.width, nxt.height)))
+            total += shift
+            cur, rows, frames, shrinks = nxt, nxt_rows, frames + 1, 0
+            # Now that one step's distance is known, take the biggest step that
+            # still leaves an overlap band to match the next frame against. Pages
+            # set their own wheel step, so this has to be measured, not assumed.
+            per_tick = shift / float(ticks)
+            if per_tick >= 1:
+                ticks = max(1, min(50, int(vp["h"] * OVERLAP_FRACTION / per_tick)))
+        else:
+            reason = ("stopped at the frame limit" if frames >= FULL_PAGE_MAX_FRAMES
+                      else f"stopped at the {max_height}px height limit")
+    img = capture.stack(tiles)
+    return img, dict(frames=frames, height=img.height, width=img.width, reason=reason,
+                     complete=reason.startswith("reached"), viewport=vp)
 
 
 # ---- actuation ----
@@ -598,6 +1052,13 @@ def press_key(key, keys):
     rec = _require(key)
     with inputs.input_lock(key):
         inputs.key(rec["display"], keys)
+    # Watch for the zoom chords going past. Zoom is what decides how many CSS
+    # pixels the page thinks it has, so a display that has been zoomed and does
+    # not know it reports a width that is not the one the page is laid out at.
+    zoom = zoom_after_keys(rec.get("zoom") or 100, keys)
+    if zoom != (rec.get("zoom") or 100):
+        registry.upsert(key, dict(zoom=zoom))
+        util.log(f"browser zoom on {key} is now {zoom}%", component="surfaces")
     _bump_input(key, rec)
 
 
@@ -787,8 +1248,11 @@ def recover(key, *, restart_browser=False):
         pid = _launch_browser(rec.get("browser") or find_browser(), paths.profile_dir(key),
                               rec.get("project_dir") or os.getcwd(), display,
                               rec.get("last_url") or "about:blank",
-                              rec.get("browser_flags"))
-        registry.upsert(key, dict(chrome_pid=pid))
+                              rec.get("browser_flags"),
+                              width=rec.get("width"), height=rec.get("height"))
+        # The relaunch cleared the profile's saved zoom, so the display is back at
+        # 100% whatever it was before.
+        registry.upsert(key, dict(chrome_pid=pid, zoom=100))
         time.sleep(2.5)
         steps.append(f"relaunched the browser (pid {pid}) at {rec.get('last_url') or 'about:blank'}")
         rec = registry.get(key)

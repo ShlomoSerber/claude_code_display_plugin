@@ -26,6 +26,7 @@ def _state():
         surf.append(dict(key=r["key"], project_dir=r.get("project_dir"), display=r.get("display"),
                          label=r.get("label"), url=r.get("last_url"), session=r.get("session"),
                          width=r.get("width", 1280), height=r.get("height", 800),
+                         viewport=surfaces.viewport_line(r), zoom=r.get("zoom", 100),
                          pss_mb=surfaces.pss_mb(r) if surfaces._alive(r) else 0,
                          vnc_port=r.get("vnc_port"), alive=surfaces._alive(r)))
     surf.sort(key=lambda s: (s["project_dir"] or "", s["key"]))

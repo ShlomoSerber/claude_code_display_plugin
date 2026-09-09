@@ -36,6 +36,34 @@ The README above describes the program. Notes specific to editing it:
 - **Browser flags:** the base set lives in `surfaces.CHROME_FLAGS`; per-display extras come
   from the environment via `surfaces.extra_browser_flags()` (`CCDP_PROXY`,
   `CCDP_BROWSER_FLAGS`) and are stored on the surface record so a relaunch keeps them.
+  `--window-size` is deliberately *not* in `CHROME_FLAGS` — it is per surface and
+  `set_viewport` changes it, so `_launch_browser` appends it.
+- **Zoom is profile state, not a flag.** A reported "`--force-device-scale-factor=1` doesn't
+  change devicePixelRatio" was Chrome *page zoom* at 110%, saved per origin in the profile
+  (`partition.per_host_zoom_levels`) by one earlier `ctrl+plus` and inherited by every later
+  session on that display. No flag can undo it: `_reset_zoom_prefs()` strips those keys
+  before every launch, and `press_key` watches the zoom chords go past so `viewport_line()`
+  can say the display is zoomed. Don't "simplify" this back to a flag.
+- **The display measures itself.** `calibrate()` loads `CALIBRATION_HTML` — magenta page
+  area, a 200-CSS-px scrolling box, a 100-CSS-px ruler — and reads the rectangle back out of
+  the capture, which is the only way to know the page area, the scrollbar width and the
+  scale without a DOM channel. Every marker must stay a *patch inside* the magenta, or the
+  magenta bounding box stops being the page area (that was the first version's bug). Numbers
+  are exact against the JS ground truth; if you touch the page, re-verify against a real
+  `window.innerWidth`, don't reason about it.
+- **`set_viewport` restarts the display.** Xvfb fixes its framebuffer at start — its RandR
+  maximum *is* the launch size, `xrandr` cannot grow it — so `resize()` relaunches the X
+  server and the browser. It measures, corrects once, and lands exactly; keep the correction
+  loop rather than hardcoding the toolbar height.
+- **Full-page capture is scroll-and-stitch, and both halves are load-bearing.** The wheel
+  step is set by the page (measured at 120px on one test page, ~50 elsewhere), so a first
+  scroll that overshoots the viewport leaves no overlap and the capture silently stops after
+  one frame — hence `FIRST_SCROLL_TICKS = 2` and calibrating the step from the first real
+  shift. And `capture.find_shift` tests the longest *contiguous* run of matching rows, not
+  the fraction: a sticky header stays put while the page moves, which a ratio test reads as
+  "no match". "Nothing moved" (bottom) is `changed_fraction == 0`, checked *before* the
+  shift search — without it the shrink-and-retry path un-sticks the page and re-captures
+  forever.
 - **Held mouse buttons:** `mouse_down` without `mouse_up` leaves the pointer captured. The
   held buttons live in the registry (`buttons_down`) so `recover()` can release them.
 - **Per-session MCP reality:** Claude Code spawns one MCP server per session, so shared

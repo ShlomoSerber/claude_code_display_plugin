@@ -69,8 +69,35 @@ TOOLS = [
          description="Capture a display and return it as an image. All click/move coordinates "
                      "are pixels in THIS image (top-left origin). The reply names the display "
                      "and the page it captured — check that against your own lane before you "
-                     "draw a conclusion from it.",
-         inputSchema=_with_display({})),
+                     "draw a conclusion from it, and says how many CSS pixels wide the page is "
+                     "being laid out at, which is not the same as the display's width. "
+                     "Set full_page=true to get the whole scrollable page as one tall image "
+                     "instead of just what fits on screen.",
+         inputSchema=_with_display({
+             "full_page": {"type": "boolean", "default": False,
+                           "description": "Capture the entire scrollable page, not just the "
+                                          "visible part, by scrolling it and joining the "
+                                          "frames. Use it to read or review a long screen in "
+                                          "one image. The result is the page area only (no "
+                                          "browser toolbar) and it SCROLLS THE PAGE, so do not "
+                                          "take click coordinates from it — take a normal "
+                                          "screenshot for that."}})),
+    dict(name="set_viewport",
+         description="Set the page's viewport to an exact size in CSS pixels — the operation "
+                     "responsive and layout work is made of ('render this at 1280 wide and look "
+                     "at it'). Sizes the display so the page gets exactly the width and height "
+                     "you ask for, with browser zoom back at 100% so one CSS pixel is one screen "
+                     "pixel and screenshots stay sharp. The display's width is NOT the page's "
+                     "width by itself: the toolbar takes the top and a scrollbar takes the "
+                     "right, and the reply tells you what the page ended up with. This restarts "
+                     "the browser on that display, so the page is reloaded and anything typed "
+                     "into it is lost — set the size first, then do the work.",
+         inputSchema=_with_display({
+             "width": {"type": "integer",
+                       "description": "Viewport width in CSS pixels, e.g. 1280 or 1366."},
+             "height": {"type": "integer",
+                        "description": "Viewport height in CSS pixels. Left out, the current "
+                                       "height is kept."}}, ["width"])),
     dict(name="click",
          description="Click at pixel (x, y) on the display. button: 1=left,2=middle,3=right. "
                      "Set double=true for a double-click.",
@@ -165,7 +192,11 @@ TOOLS = [
              "label": {"type": "string",
                        "description": "Short name to recognise it by later, e.g. the branch or "
                                       "lane you're testing ('board-shifts'). Shown by "
-                                      "list_surfaces and usable as the display argument."}}}),
+                                      "list_surfaces and usable as the display argument."},
+             "width": {"type": "integer",
+                       "description": "Page viewport width in CSS pixels for this display, e.g. "
+                                      "1366. Same thing set_viewport does, without the restart."},
+             "height": {"type": "integer", "description": "Page viewport height in CSS pixels."}}}),
     dict(name="release_display",
          description="Close a display and give its memory back — a whole browser, roughly 0.9GB. "
                      "Call it when you're finished with a display you created. With no argument "
@@ -340,14 +371,18 @@ def call_tool(name, args):
     if name == "new_display":
         url = _arg(args, "url", "uri", "address", default=None)
         label = _arg(args, "label", "name", "title", default=None)
-        rec = surfaces.create(WORKSPACE_DIR, url=url, label=label, session=SESSION_ID)
+        width = _arg(args, "width", "w", "css_width", default=None, cast=_int)
+        height = _arg(args, "height", "h", "css_height", default=None, cast=_int)
+        rec = surfaces.create(WORKSPACE_DIR, url=url, label=label, session=SESSION_ID,
+                              viewport=((width, height) if width else None))
         ACTIVE_KEY = rec["key"]
         _selector_used = True
         return _text(f"Created display {rec['key']} on {rec['display']}"
                      + (f' labelled "{label}"' if label else "")
                      + f" for {rec['project_dir']}. This session's calls now go to it; pass "
                      f"display='{rec['key']}' explicitly if you also drive another one. Call "
-                     "release_display when you're done with it." + _tag(rec, always=True))
+                     "release_display when you're done with it.\n"
+                     + surfaces.viewport_line(rec) + _tag(rec, always=True))
 
     if name == "release_display":
         rec = _target(args, create=False)
@@ -388,8 +423,23 @@ def call_tool(name, args):
     if name == "screenshot":
         rec = _target(args)
         key = rec["key"]
+        if _arg(args, "full_page", "fullpage", "whole_page", "full", default=False, cast=_bool):
+            img, info = surfaces.full_page_image(key)
+            png, w, h, _ = surfaces.capture.png_bytes(img)
+            rec = registry.get(key) or rec
+            text = (f"Whole page as one image: {w}x{h}px, joined from {info['frames']} "
+                    f"screen{'s' if info['frames'] != 1 else ''} ({info['reason']}). This is the "
+                    "page area only, and taking it scrolled the page — click/move coordinates "
+                    "do NOT map to it. Take a normal screenshot before clicking.")
+            if not info["complete"]:
+                text += " The page continues past the bottom of this image."
+            text += "\n" + surfaces.viewport_line(rec) + _tag(rec, always=True)
+            return {"content": [
+                {"type": "text", "text": text},
+                {"type": "image", "data": base64.b64encode(png).decode(), "mimeType": "image/png"}]}
         png, w, h, _, stale = surfaces.screenshot_png(key, track=True)
-        text = f"Display is {w}x{h}px. Coordinates for click/move are pixels here."
+        text = (f"Display is {w}x{h}px. Coordinates for click/move are pixels here.\n"
+                + surfaces.viewport_line(rec))
         text += _tag(rec, always=True)
         dialog = surfaces.pending_dialog(rec)
         if dialog:
@@ -399,6 +449,22 @@ def call_tool(name, args):
         return {"content": [
             {"type": "text", "text": text},
             {"type": "image", "data": base64.b64encode(png).decode(), "mimeType": "image/png"}]}
+
+    if name == "set_viewport":
+        width = _arg(args, "width", "w", "css_width", "viewport_width", cast=_int)
+        height = _arg(args, "height", "h", "css_height", "viewport_height",
+                      default=None, cast=_int)
+        rec = _target(args)
+        info = surfaces.set_viewport(rec["key"], width, height)
+        rec = registry.get(rec["key"]) or rec
+        vp = info["viewport"]
+        head = (f"The page now gets exactly {vp['css_w']}x{vp['css_h']} CSS pixels."
+                if info["exact"] else
+                f"The page now gets {vp['css_w']}x{vp['css_h']} CSS pixels — the closest this "
+                f"display could get to the {info['target'][0]}x{info['target'][1]} you asked for.")
+        return _text(head + " The browser restarted, so the page was reloaded.\n"
+                     + surfaces.viewport_line(rec)
+                     + "\nCall screenshot to see it." + _tag(rec, always=True))
 
     if name == "click":
         x, y = _arg(args, "x", cast=_int), _arg(args, "y", cast=_int)

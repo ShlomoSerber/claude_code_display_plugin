@@ -17,8 +17,8 @@ display live and take control over VNC.
 
 - A **display** (virtual X server via Xvfb) with a browser on it, created on demand.
 - **Tools in every Claude Code session** to use it (pure-vision):
-  `open_url`, `screenshot`, `click`, `move`, `drag`, `mouse_down`, `mouse_up`,
-  `scroll`, `type_text`, `press_key`, `attach_file`, `recover_display`,
+  `open_url`, `screenshot`, `set_viewport`, `click`, `move`, `drag`, `mouse_down`,
+  `mouse_up`, `scroll`, `type_text`, `press_key`, `attach_file`, `recover_display`,
   `list_surfaces`, `new_display`, `release_display`, `record_bug`, and
   `record_feedback`.
   Every one of the acting tools takes an optional `display`, and every response says
@@ -38,8 +38,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.4.2_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.4.2_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.5.0_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.5.0_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -94,7 +94,54 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
 - **Pure-vision by design:** `screenshot` returns the display at native resolution; all
   input coordinates are pixels in that image (1:1). Navigation types the URL into the
   address bar like a person. This was validated in testing: models ground clicks on these
-  screenshots reliably.
+  screenshots reliably. It is why a full-page capture is a scroll-and-stitch rather than a
+  CDP `captureBeyondViewport` call, and why the display measures itself (below) instead of
+  asking the DOM.
+
+## Layout work: exact viewports, and the whole page in one image
+
+The display's size is not the page's size, and the difference used to be invisible. A
+1280x800 display gives the page 1279x712 CSS pixels — the toolbar takes 87 rows off the top
+and a scrollbar takes 15 columns off the right — and browser **zoom** rescales all of it: at
+110%, a page on that display is laid out at 1163 CSS px, not 1280. A session doing
+responsive QA read the display's width as the page's, took the app's honest horizontal
+scroll for a bug in the change under review, and had no way to fix it from inside a session.
+
+Three things close that:
+
+- **Every display measures itself.** On creation it loads a calibration page that paints
+  known colours at known CSS sizes, and reads the capture back: the page area's rectangle,
+  Chrome's scrollbar width, and the scale. Measured, not assumed from a Chrome version — and
+  the only way to get the number at all without a DOM channel. Every `screenshot`,
+  `list_surfaces` and `ccdp surfaces` then reports it:
+
+  ```
+  Display is 1367x856px. Coordinates for click/move are pixels here.
+  1367x856 display, page viewport 1366x768 CSS px at (0,87); a page with a vertical
+  scrollbar lays out 1351 CSS px wide
+  ```
+
+- **`set_viewport(width, height?)` gives the page an exact CSS size.** It sizes the
+  framebuffer to the requested viewport plus the browser's measured chrome, relaunches Xvfb
+  and the browser there, re-measures, and corrects once if the measurement missed — so
+  `set_viewport(1366, 768)` lands on 1366x768 and not near it. Xvfb fixes its framebuffer at
+  start (its RandR maximum *is* the size it was given), so this restarts the display's X
+  server and browser; the page is reloaded and anything typed into it is lost. `new_display`
+  takes `width`/`height` for the same thing at creation time.
+
+- **Zoom is pinned and watched.** Chrome persists zoom per origin in the profile, so one
+  stray `ctrl+plus` outlived the session that pressed it and every later session inherited a
+  page laid out 10% narrow. The saved zoom levels are now cleared before every browser
+  launch, `--force-device-scale-factor=1` stops the X server's DPI moving the scale, and the
+  zoom chords are tracked as they go past so a zoomed display says so on every screenshot
+  instead of quietly lying about its width.
+
+`screenshot(full_page=true)` returns the whole scrollable page as one tall image. There is
+no CDP call for it here by design, so it scrolls the page and joins the frames, working out
+how far each scroll actually moved by matching the frames against each other — pages set
+their own wheel step, and a sticky header stays put while everything else moves. The result
+is the page area only, and taking it scrolls the page, so its coordinates are not the
+display's: it is a document to read, not something to click.
 
 ## File uploads
 
@@ -236,8 +283,8 @@ PYTHONPATH="$PWD" python3 -m ccdp ui --no-open
 ## Status
 
 Implemented and smoke-tested: display lifecycle, capture, input, the MCP server and its
-tools, addressable displays for parallel agents, the dashboard (state/stream/apply), the bug
-tool, and the `.deb`. Known **pending**
+tools, addressable displays for parallel agents, exact viewports and full-page capture, the
+dashboard (state/stream/apply), the bug tool, and the `.deb`. Known **pending**
 work (by design — to be driven by real use and bug reports): sandbox hardening, the
 multi-model "operator" loop, richer human take-over in-browser, and cross-platform
 (this targets Linux first).
@@ -248,7 +295,8 @@ multi-model "operator" loop, richer human take-over in-browser, and cross-platfo
   total RAM, half of it divided by ~0.9GB per display, minimum 1 and no upper bound),
   `CCDP_DISPLAY_DIR` (override which directory a session's displays are keyed by),
   `CCDP_PROXY` / `CCDP_BROWSER_FLAGS` (browser flags, read when a display is created),
-  `CCDP_WIDTH` / `CCDP_HEIGHT`, `CCDP_IDLE_REAP_S`, `CCDP_SANDBOX`.
+  `CCDP_WIDTH` / `CCDP_HEIGHT` (the default framebuffer for a new display; `set_viewport`
+  changes a live one), `CCDP_IDLE_REAP_S`, `CCDP_SANDBOX`.
 - Bug reports: `~/.local/state/ccdp/bugs/*.json`
 - Feedback: `~/.local/state/ccdp/feedback/*.json`
 - Both, readably: `ccdp reports [all|bug|feedback]`.

@@ -124,7 +124,12 @@ function renderSurfaces(state) {
       grid.appendChild(t);
     }
     t.dataset.key = s.key; t.dataset.w = s.width; t.dataset.h = s.height;
-    t.querySelector(".dpy").textContent = `${s.display}  ${s.key}`;
+    const dpy = t.querySelector(".dpy");
+    // The zoom is worth showing on the face of the tile: it silently changes how
+    // many CSS pixels the page is laid out at, and a display left zoomed makes
+    // every later session's width measurements wrong.
+    dpy.textContent = `${s.display}  ${s.key}` + (s.zoom !== 100 ? `  zoom ${s.zoom}%` : "");
+    dpy.title = s.viewport || "";
     const tag = t.querySelector(".tag");
     tag.textContent = s.label || "";
     tag.classList.toggle("hidden", !s.label);
