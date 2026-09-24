@@ -978,12 +978,62 @@ def _bump_input(key, rec):
     registry.upsert(key, dict(input_seq=int(rec.get("input_seq") or 0) + 1))
 
 
+# How long open_url waits for the address bar to take focus before typing anyway.
+ADDRESS_BAR_TIMEOUT_S = 4.0
+
+
+def _toolbar_strip(rec, vp):
+    """The address-bar row: below the tab strip (whose loading spinner animates
+    on its own) and above the page."""
+    top = max(0, int(vp["y"]) // 2)
+    img = capture.grab(rec["display"], rec["width"], rec["height"])
+    return img.crop((0, top, img.width, max(top + 1, int(vp["y"]))))
+
+
+def _focus_address_bar(rec):
+    """ctrl+L, then wait until the address bar visibly has focus.
+
+    Chrome offers ctrl+L to the page before acting on it, so a page whose main
+    thread is busy (a Flutter app starting up, observed) delays the focus change,
+    and whatever is typed meanwhile goes to the page. Losing the first few
+    characters is the nasty case: `http://host/#/x` arrives as `//host/#/x`, which
+    the omnibox reads as a file path and opens file:///host/%23/x. So watch the
+    toolbar change instead of trusting a fixed delay. An address bar that already
+    had focus with its text selected does not change at all, which is also a state
+    where typing is safe; that case costs the timeout and nothing else.
+    """
+    vp = viewport_of(rec)
+    if not vp.get("y"):
+        inputs.key(rec["display"], "ctrl+l")
+        time.sleep(0.3)
+        return None
+    before = _toolbar_strip(rec, vp)
+    inputs.key(rec["display"], "ctrl+l")
+    deadline = time.time() + ADDRESS_BAR_TIMEOUT_S
+    while time.time() < deadline:
+        if capture.changed_fraction(before, _toolbar_strip(rec, vp)) > 0:
+            time.sleep(0.1)  # let the selection land before the first keystroke
+            return True
+        time.sleep(0.03)
+    return False
+
+
 def open_url(key, url):
+    """Navigate the way a person does: address bar, type, Return. Returns whether
+    the address bar was seen taking focus (None when the display has no measured
+    toolbar to watch)."""
     rec = _require(key)
     with inputs.input_lock(key):
-        inputs.open_url(rec["display"], url)
-    registry.upsert(key, dict(last_url=url))
+        focused = _focus_address_bar(rec)
+        inputs.type_text(rec["display"], url)
+        inputs.key(rec["display"], "Return")
+    # Kept on the record because ensure() navigates too, and its caller only
+    # sees the record.
+    registry.upsert(key, dict(last_url=url, nav_unconfirmed=focused is False))
     _bump_input(key, rec)
+    if focused is False:
+        util.log(f"open_url on {key}: address bar never visibly took focus", component="surfaces")
+    return focused
 
 
 def click(key, x, y, button=1, double=False):
@@ -1069,14 +1119,15 @@ def attach_file(key, path):
     it by hand means driving a GTK chooser through a screenshot, and there are two
     traps in the way. Without a window manager the dialog opens at whatever size
     GTK asks for, which here is taller than the framebuffer, so its Cancel/Open
-    row falls off the bottom of every screenshot. And Return in the location entry
-    does not confirm — GTK will not activate the default button for a window that
-    no window manager ever marked active — so the gesture has to end in a click.
+    row falls off the bottom of every screenshot. And the keyboard cannot confirm:
+    Return in the location entry (or a double-click on a file) closes the dialog,
+    but without a window manager Chrome gets no file from it, so the page's input
+    never changes. A dialog that closed is therefore not proof of anything — only
+    a click on the confirm button delivers the file, so the gesture ends in one.
 
     So: fit the dialog to the display, type the path into the location bar
-    (ctrl+L), try Return, and click the confirm button if the dialog is still up.
-    All of it is ordinary pointer and keyboard input, the same channel as
-    everything else here.
+    (ctrl+L), and click the confirm button. All of it is ordinary pointer and
+    keyboard input, the same channel as everything else here.
     """
     rec = _require(key)
     display = rec["display"]
@@ -1115,22 +1166,27 @@ def attach_file(key, path):
         inputs.type_text(display, real)
         time.sleep(0.7)
         steps.append(f"typed {real} into the dialog's location bar")
-        inputs.key(display, "Return")
-        time.sleep(1.2)
 
-        confirmed = native_dialog(rec) is None
-        if confirmed:
-            steps.append("Return confirmed the dialog")
-        else:
-            # The confirm button sits in the bottom-right of the action row; anchor
-            # to the dialog's own corner rather than to fixed screen coordinates.
-            bx = int(dlg.get("x") or 0) + int(dlg.get("width") or 0) - 30
-            by = int(dlg.get("y") or 0) + int(dlg.get("height") or 0) - 23
+        # Never Return: it closes the dialog with no file (see above). The confirm
+        # button sits in the bottom-right of the action row; anchor to the dialog's
+        # own corner rather than to fixed screen coordinates. A second click covers
+        # the location bar's completion popup swallowing the first one.
+        bx = int(dlg.get("x") or 0) + int(dlg.get("width") or 0) - 30
+        by = int(dlg.get("y") or 0) + int(dlg.get("height") or 0) - 23
+        confirmed = False
+        for attempt in (1, 2):
             inputs.click(display, bx, by)
-            time.sleep(1.4)
-            confirmed = native_dialog(rec) is None
-            steps.append(f"clicked the dialog's confirm button at ({bx},{by})"
-                         + ("" if confirmed else " — the dialog is still open"))
+            # Poll rather than sleep: a second click after a slow close would
+            # land on the page underneath.
+            deadline = time.time() + 3.0
+            while not confirmed and time.time() < deadline:
+                time.sleep(0.2)
+                confirmed = native_dialog(rec) is None
+            if confirmed:
+                break
+        steps.append(f"clicked the dialog's confirm button at ({bx},{by})"
+                     + (" twice" if attempt == 2 else "")
+                     + ("" if confirmed else " — the dialog is still open"))
     _bump_input(key, rec)
     util.log(f"attach_file on {key}: {real} — {'ok' if confirmed else 'dialog still open'}",
              component="surfaces")
@@ -1306,7 +1362,7 @@ def start_vnc(key):
         return rec["vnc_port"]
     port = 5900 + int(rec["display"][1:])
     pid = _spawn(["x11vnc", "-display", rec["display"], "-localhost", "-rfbport", str(port),
-                  "-nopw", "-forever", "-shared", "-noxdamage", "-quiet"],
+                  "-nopw", "-forever", "-shared", "-noxdamage", "-nobell", "-quiet"],
                  util.x_env(rec["display"]), f"vnc{rec['display'][1:]}.log")
     registry.upsert(key, dict(vnc_port=port, vnc_pid=pid))
     _wait_port(port)  # so callers (websockify) find it ready
@@ -1342,7 +1398,10 @@ def start_control(key):
 
 def _novnc_url(wsport):
     return (f"http://127.0.0.1:{wsport}/vnc.html"
-            "?autoconnect=true&resize=scale&reconnect=true&show_dot=true")
+            "?autoconnect=true&resize=scale&reconnect=true&show_dot=true"
+            # The dashboard runs on the host, so noVNC's bell would ring the
+            # human's real speakers on every X bell from the display.
+            "&bell=off")
 
 
 def stop_vnc(key):

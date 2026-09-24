@@ -38,8 +38,8 @@ display live and take control over VNC.
 Build produces a single `.deb`:
 
 ```bash
-bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.5.0_all.deb
-sudo apt install ./dist/claude-code-display-plugin_0.5.0_all.deb
+bash packaging/build-deb.sh        # -> dist/claude-code-display-plugin_0.5.1_all.deb
+sudo apt install ./dist/claude-code-display-plugin_0.5.1_all.deb
 ```
 
 `apt` pulls the runtime dependencies (Xvfb, xdotool, scrot, x11vnc, x11-utils,
@@ -158,8 +158,9 @@ the page. Two things used to make that a dead end, and both are fixed:
   screenshot.
 
 `attach_file(path)` does the whole gesture: it fits the dialog to the display, types the
-absolute path into the location bar and confirms. Click the page's file control first, then
-call it.
+absolute path into the location bar and clicks Open. It never presses Return: in a chooser
+with no window manager, Return closes the dialog but hands the page no file. Click the
+page's file control first, then call it.
 
 ```
 click(128, 227)                       # the page's "Choose File" button

@@ -30,9 +30,18 @@ The README above describes the program. Notes specific to editing it:
   display keeps its old environment until `recover_display(restart_browser=true)`.
 - **No window manager has consequences beyond focus.** A dialog opens at whatever size GTK
   asks for (~1231x902 here, taller than the framebuffer) and nothing will ever resize it, and
-  GTK will not activate a default button for a window no WM marked active — so Return in a
-  file chooser does nothing and the gesture has to end in a click. `surfaces.attach_file()`
-  handles both; if you touch it, re-test against a real chooser rather than reasoning about it.
+  the keyboard cannot confirm it: Return in the location bar (or a double-click on a file)
+  *closes* the chooser, but Chrome receives no file and the page's input never changes. So a
+  closed dialog proves nothing, and the gesture has to end in a click on Open — never try
+  Return first. `surfaces.attach_file()` handles both; if you touch it, re-test against a
+  real chooser *and check the page got the file*, not that the dialog went away.
+- **`open_url` waits for the address bar.** Chrome offers ctrl+L to the page before acting on
+  it, so a busy page (a Flutter app) delays the focus change and the first typed characters
+  land in the page: `http://host/#/x` became `//host/#/x`, which the omnibox opens as
+  `file:///host/%23/x`. `_focus_address_bar()` watches the toolbar row change before typing.
+  Don't replace it with a fixed sleep.
+- **No sound reaches the host.** `x11vnc` runs with `-nobell` and the noVNC URL carries
+  `bell=off`: the dashboard is a host process, so a bell there rings the human's speakers.
 - **Browser flags:** the base set lives in `surfaces.CHROME_FLAGS`; per-display extras come
   from the environment via `surfaces.extra_browser_flags()` (`CCDP_PROXY`,
   `CCDP_BROWSER_FLAGS`) and are stored on the surface record so a relaunch keeps them.

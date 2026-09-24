@@ -418,6 +418,12 @@ def call_tool(name, args):
     if name == "open_url":
         url = _arg(args, "url", "uri", "address", "link", "href")
         rec = _target(args, url=url)
+        rec = registry.get(rec["key"]) or rec
+        if rec.get("nav_unconfirmed"):
+            return _text(f"Typed {url} and pressed Return, but the address bar never visibly took "
+                         f"focus within {surfaces.ADDRESS_BAR_TIMEOUT_S:g}s — the page may be busy "
+                         "and have swallowed some of the keystrokes. Take a screenshot and check "
+                         "the address bar before trusting it." + _tag(rec, always=True))
         return _text(f"Opened {url}. Call screenshot to see the page." + _tag(rec))
 
     if name == "screenshot":
