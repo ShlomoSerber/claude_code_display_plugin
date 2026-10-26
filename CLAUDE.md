@@ -42,6 +42,10 @@ The README above describes the program. Notes specific to editing it:
   Don't replace it with a fixed sleep.
 - **No sound reaches the host.** `x11vnc` runs with `-nobell` and the noVNC URL carries
   `bell=off`: the dashboard is a host process, so a bell there rings the human's speakers.
+- **WebGL is software-only.** Xvfb has no GPU and Chrome (137+) no longer falls back to
+  SwiftShader by itself, so `CHROME_FLAGS` asks for it (`--use-angle=swiftshader
+  --enable-unsafe-swiftshader`). Drop either flag and WebGL apps (Figma) say "WebGL isn't
+  supported". A running display keeps its old flags until its browser is relaunched.
 - **Browser flags:** the base set lives in `surfaces.CHROME_FLAGS`; per-display extras come
   from the environment via `surfaces.extra_browser_flags()` (`CCDP_PROXY`,
   `CCDP_BROWSER_FLAGS`) and are stored on the surface record so a relaunch keeps them.

@@ -84,8 +84,10 @@ Claude Code session ──(stdio MCP: `ccdp mcp`)──┤
   captures come back black; `x11vnc` needs the same. `util.x_env()` also cuts the host's
   audio sockets and its D-Bus session bus, so the display has no sound card and no route to
   the human's desktop services — that last one is what keeps file dialogs on the virtual
-  display instead of the portal. All of it lives in `util.x_env()` and
-  `surfaces.CHROME_FLAGS`.
+  display instead of the portal. There is no GPU, so WebGL runs in software through
+  SwiftShader (`--use-angle=swiftshader --enable-unsafe-swiftshader`); without it Chrome
+  disables WebGL and apps such as Figma refuse to open. All of it lives in
+  `util.x_env()` and `surfaces.CHROME_FLAGS`.
 - **Press-and-hold gestures are first class:** `drag(x1,y1,x2,y2)` presses, travels in
   small steps and releases — the intermediate moves are what make HTML5 drag-and-drop and
   pointermove handlers fire at all. `mouse_down` / `mouse_up` hold the button across calls,

@@ -86,6 +86,10 @@ PROVISION_GRACE_S = 120
 # property value — deterministic by viewport width, surviving a hard reload).
 CHROME_FLAGS = [
     "--ozone-platform=x11", "--disable-gpu",
+    # WebGL in software. Xvfb has no GPU, and since Chrome 137 the SwiftShader
+    # fallback is off unless asked for, so WebGL apps (Figma, maps) refused to
+    # open: "WebGL isn't supported, or is disabled". Measured on Chrome 155.
+    "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
     # Pin the device scale factor so one CSS pixel is one screen pixel. Chrome
     # otherwise derives it from the X server's DPI, which Xvfb reports as 100 and
     # nothing here controls. `--window-size` is not in this list: it is per
